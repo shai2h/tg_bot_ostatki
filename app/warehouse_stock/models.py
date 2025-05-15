@@ -2,7 +2,7 @@ from db.database import Base
 from sqlalchemy import Column, Integer, JSON, String
 
 
-class Hotels(Base):
+class WarehouseStocks(Base):
     __tablename__ = "warehouse_stock"
 
     id = Column(Integer, primary_key=True)
