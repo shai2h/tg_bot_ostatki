@@ -24,7 +24,7 @@ def upgrade() -> None:
     op.create_table('warehouse_stock',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('articul', sa.String(), nullable=True),
-    sa.Column('name', sa.NullType(), nullable=False),
+    sa.Column('name', sa.String(), nullable=False),
     sa.Column('vid', sa.String(), nullable=True),
     sa.Column('brend', sa.String(), nullable=True),
     sa.Column('kod', sa.Integer(), nullable=True),
