@@ -7,7 +7,7 @@ class WarehouseStocks(Base):
 
     id = Column(Integer, primary_key=True)
     articul = Column(String, nullable=True)
-    name = Column(nullable=False)
+    name = Column(String, nullable=False)
     vid = Column(String)
     brend = Column(String)
     kod = Column(Integer)
