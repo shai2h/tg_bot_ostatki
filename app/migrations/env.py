@@ -8,12 +8,14 @@ from sqlalchemy import pool
 
 from alembic import context
 
+from app.db.database import Base
+
 # Абсолютный путь, чтобы не было проблем с импортами
 sys.path.insert(0, dirname(dirname(abspath(__file__))))
 
 
 # Импортируем модели
-from db.database import Base
+
 from app.warehouse_stock.models import WarehouseStocks
 
 # this is the Alembic Config object, which provides
