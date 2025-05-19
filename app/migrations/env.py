@@ -1,8 +1,5 @@
 from logging.config import fileConfig
-import sys
-from os.path import abspath, dirname
 
-from app.config import settings
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
@@ -10,19 +7,11 @@ from alembic import context
 
 from app.db.database import Base
 
-# Абсолютный путь, чтобы не было проблем с импортами
-sys.path.insert(0, dirname(dirname(abspath(__file__))))
-
-
-# Импортируем модели
-
-from app.warehouse_stock.models import WarehouseStocks
+from app.warehouse_stock import models
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
-
-config.set_main_option("sqlalchemy.url", f"{settings.DATABASE_URL}?async_fallback=True")
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
