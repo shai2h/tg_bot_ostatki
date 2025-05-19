@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     DB_NAME: str
     DATABASE_URL: str = ""
 
+    BOT_TOKEN: str
+
     @model_validator(mode='before')
     @classmethod
     def build_database_url(cls, values: dict) -> dict:
