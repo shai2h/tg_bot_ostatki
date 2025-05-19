@@ -9,8 +9,6 @@ from sqlalchemy.dialects.postgresql import insert
 router = APIRouter()
 
 
-from sqlalchemy.dialects.postgresql import insert
-
 @router.post("/api/ostatki")
 async def receive_ostatki(data: List[Dict[str, Any]] = Body(...)):
     try:
