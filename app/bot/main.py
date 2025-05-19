@@ -1,10 +1,18 @@
-from fastapi import FastAPI
-from app.api.ostatki import router as ostatki_router
+# bot/main.py
+import asyncio
+from aiogram import Bot, Dispatcher
+from aiogram.enums.parse_mode import ParseMode
+from aiogram.client.default import DefaultBotProperties
+from app.config import settings
+from app.bot.handlers import register_handlers
 
-def main():
-    app = FastAPI()
-    app.include_router(ostatki_router)
+bot = Bot(
+    token=settings.BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 
+dp = Dispatcher()
+register_handlers(dp)
 
-    import uvicorn
-    uvicorn.run(app, host="192.168.122.18", port=8000)
+async def main():
+    await dp.start_polling(bot)
