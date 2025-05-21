@@ -6,6 +6,8 @@ from sqlalchemy import insert
 from typing import List, Dict, Any
 from sqlalchemy.dialects.postgresql import insert
 
+from datetime import datetime
+
 router = APIRouter()
 
 
@@ -24,6 +26,7 @@ async def receive_ostatki(data: List[Dict[str, Any]] = Body(...)):
                         "vid": item["vid"],
                         "brend": item["brend"],
                         "articul": item.get("articul"),
+                        "updated_at": datetime.utcnow(),  # <- фиксируем время прихода из 1С
                     }
                 )
                 await session.execute(stmt)
