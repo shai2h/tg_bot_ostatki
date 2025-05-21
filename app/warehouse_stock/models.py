@@ -16,8 +16,6 @@ class WarehouseStocks(Base):
     price = Column(String)
     ostatok = Column(String)
     sklad = Column(String)
-    
-    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     __table_args__ = (
         UniqueConstraint("kod", "sklad", name="uix_kod_sklad"),

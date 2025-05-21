@@ -59,7 +59,7 @@ async def receive_ostatki(data: List[Dict[str, Any]] = Body(...)):
         return {"status": "ok", "processed": len(data)}
 
     except Exception as e:
-        logger.exception("🔥 Общая ошибка API /api/ostatki")
+        logger.exception("Общая ошибка API /api/ostatki")
         raise HTTPException(status_code=500, detail=str(e))
 
 
