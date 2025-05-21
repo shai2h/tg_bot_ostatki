@@ -12,6 +12,10 @@ class Settings(BaseSettings):
 
     BOT_TOKEN: str
 
+    #API
+    API_HOST: str
+    API_PORT: int
+
     @model_validator(mode='before')
     @classmethod
     def build_database_url(cls, values: dict) -> dict:
