@@ -140,6 +140,10 @@ async def handle_full_report(message: Message):
         for col in ws.iter_cols(min_row=1, max_row=1):
             header = col[0].value
             col_letter = col[0].column_letter
+
+            if header is None:
+                continue  # пропускаем пустые ячейки
+
             if header in ["Вид номенклатуры", "Наименование", "Бренд"]:
                 ws.column_dimensions[col_letter].width = 40
             elif header in ["Код", "Артикул"]:
@@ -149,6 +153,7 @@ async def handle_full_report(message: Message):
             else:
                 ws.column_dimensions[col_letter].width = 15
                 col[0].fill = fill
+
 
         wb.save(file_path)
         await message.answer_document(FSInputFile(file_path), caption="📊 Полный отчет по складам")
