@@ -125,7 +125,7 @@ async def handle_full_report(message: Message):
 
         df = pd.DataFrame(data)
         file_path = f"report_{latest_date}.xlsx"
-        df.to_excel(file_path, index=False, startrow=2)
+        df.to_excel(file_path, index=False)
 
         # Загружаем и добавляем строку с датой
         wb = load_workbook(file_path)
@@ -140,10 +140,6 @@ async def handle_full_report(message: Message):
         for col in ws.iter_cols(min_row=1, max_row=1):
             header = col[0].value
             col_letter = col[0].column_letter
-
-            if header is None:
-                continue  # пропускаем пустые ячейки
-
             if header in ["Вид номенклатуры", "Наименование", "Бренд"]:
                 ws.column_dimensions[col_letter].width = 40
             elif header in ["Код", "Артикул"]:
@@ -153,7 +149,6 @@ async def handle_full_report(message: Message):
             else:
                 ws.column_dimensions[col_letter].width = 15
                 col[0].fill = fill
-
 
         wb.save(file_path)
         await message.answer_document(FSInputFile(file_path), caption="📊 Полный отчет по складам")
