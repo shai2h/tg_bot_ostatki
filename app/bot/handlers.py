@@ -110,10 +110,27 @@ async def handle_full_report(message: Message):
             row_data.update(city_stocks)
             data.append(row_data)
 
+
+        async with async_session_maker() as session:
+            result = await session.execute(select(OstatkiMeta.last_updated).limit(1))
+            updated_at = result.scalar()
+
+        if updated_at:
+            from zoneinfo import ZoneInfo
+            updated_at = updated_at.astimezone(ZoneInfo("Europe/Moscow"))
+            latest_date = updated_at.strftime("%d.%m.%Y %H:%M:%S")
+        else:
+            latest_date = "неизвестно"
+
+
         df = pd.DataFrame(data)
-        datetime_now = datetime.now().strftime("%d-%m-%Y_%H-%M-%S")
-        file_path = f"report_{datetime_now}.xlsx"
-        df.to_excel(file_path, index=False)
+        file_path = f"report_{latest_date}.xlsx"
+        df.to_excel(file_path, index=False, startrow=2)
+
+        # Загружаем и добавляем строку с датой
+        wb = load_workbook(file_path)
+        ws = wb.active
+        ws["A1"] = f"Актуальность остатков: {latest_date}"
 
         # Настройка стилей через openpyxl
         wb = load_workbook(file_path)
@@ -124,7 +141,7 @@ async def handle_full_report(message: Message):
             header = col[0].value
             col_letter = col[0].column_letter
             if header in ["Вид номенклатуры", "Наименование", "Бренд"]:
-                ws.column_dimensions[col_letter].width = 30
+                ws.column_dimensions[col_letter].width = 40
             elif header in ["Код", "Артикул"]:
                 ws.column_dimensions[col_letter].width = 20
             elif header.startswith("Розничная"):
