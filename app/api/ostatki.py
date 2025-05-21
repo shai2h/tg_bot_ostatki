@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 router = APIRouter()
 
-moscow_tz = timezone(timedelta(hours=3))  # задаем часовой пояс +3
+moscow_tz = timezone(timedelta(hours=0))  # задаем часовой пояс +3
 
 import logging
 from pprint import pformat  # в начало файла
