@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, FSInputFile
@@ -16,7 +17,7 @@ from app.services.search import find_products_by_text as find_products_by_query
 
 from collections import defaultdict
 
-import os
+from app.bot.utils import format_stock_quantity
 
 
 router = Router()
@@ -90,7 +91,7 @@ async def handle_full_report(message: Message):
             key = (row.vid, row.name, row.price, row.brend, row.kod, row.articul)
             if key not in grouped:
                 grouped[key] = {city: "" for city in all_cities}
-            grouped[key][row.sklad] = row.ostatok
+            grouped[key][row.sklad] = format_stock_quantity(row.ostatok)
 
         data = []
         for key, city_stocks in grouped.items():
@@ -178,7 +179,8 @@ async def handle_history_callback(callback: CallbackQuery):
             f"<b>🚚 Наличие по складам:</b>\n"
         )
         for stock in product['stocks']:
-            text += f"   ▫️ {stock['sklad']}: {stock['ostatok']}\n"
+            text += f"   ▫️ {stock['sklad']}: {format_stock_quantity(stock['ostatok'])}\n"
+
 
         text += f"\n📅 Актуально на: <i>{date_now}</i>"
         await callback.message.answer(text)
@@ -197,7 +199,7 @@ async def handle_user_query(message: Message):
         date_now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
         for kod, product in items.items():
             sklad_lines = "\n".join(
-                [f"   └ {s['sklad']}: <b>{s['ostatok']}</b> шт." for s in product["stocks"]]
+                [f"   └ {s['sklad']}: <b>{format_stock_quantity(s['ostatok'])}</b>" for s in product["stocks"]]
             )
 
             text = (
@@ -225,7 +227,7 @@ async def handle_user_query(message: Message):
                     f"  Наличие:\n"
                 )
                 for stock in product['stocks']:
-                    text += f"    - {stock['sklad']}: {stock['ostatok']}\n"
+                    text += f"    - {stock['sklad']}: {format_stock_quantity(stock['ostatok'])}\n"
                 text += "\n"
                 lines.append(text)
 
@@ -250,7 +252,7 @@ async def handle_user_query(message: Message):
                     f"<b>🚚 Наличие по складам:</b>\n"
                 )
                 for stock in product['stocks']:
-                    text += f"   ▫️ {stock['sklad']}: {stock['ostatok']}\n"
+                    text += f"    - {stock['sklad']}: {format_stock_quantity(stock['ostatok'])}\n"
 
                 text += f"\n📅 Актуально на: <i>{date_now}</i>"
                 await message.answer(text)
