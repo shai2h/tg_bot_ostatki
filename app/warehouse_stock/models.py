@@ -31,3 +31,9 @@ class UserQueryLog(Base):
     user_id = Column(BigInteger, nullable=False)
     query = Column(String, nullable=False)
     timestamp = Column(DateTime, nullable=False)
+
+
+class OstatkiMeta(Base):
+    __tablename__ = "ostatki_meta"
+    id = Column(Integer, primary_key=True)
+    last_updated = Column(DateTime, nullable=False)
