@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 async def receive_ostatki(data: List[Dict[str, Any]] = Body(...)):
     try:
         async with async_session_maker() as session:
-            now = datetime.now(moscow_tz)
+            now = datetime.now(moscow_tz).replace(tzinfo=None)
 
             for item in data:
                 try:
@@ -35,7 +35,6 @@ async def receive_ostatki(data: List[Dict[str, Any]] = Body(...)):
                             "vid": item["vid"],
                             "brend": item["brend"],
                             "articul": item.get("articul"),
-                            "updated_at": now,
                         }
                     )
                     await session.execute(stmt)
