@@ -5,7 +5,11 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, C
 from app.services.search import find_products_by_query, log_user_query, get_user_query_history
 from app.db.database import async_session_maker
 
-from app.warehouse_stock.models import WarehouseStocks
+from app.warehouse_stock.models import WarehouseStocks, OstatkiMeta
+
+from sqlalchemy import select
+
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -166,8 +170,16 @@ async def handle_history_callback(callback: CallbackQuery):
         await callback.message.answer("\U0001F6D1 Товар не найден. Попробуйте уточнить запрос.")
         return
 
-    all_dates = [s['updated_at'] for p in items.values() for s in p['stocks'] if s.get('updated_at')]
-    latest_date = max(all_dates).strftime("%d.%m.%Y %H:%M:%S") if all_dates else "неизвестно"
+    async with async_session_maker() as session:
+        result = await session.execute(select(OstatkiMeta.last_updated).limit(1))
+        updated_at = result.scalar()
+
+    if updated_at:
+        from zoneinfo import ZoneInfo
+        updated_at = updated_at.astimezone(ZoneInfo("Europe/Moscow"))
+        latest_date = updated_at.strftime("%d.%m.%Y %H:%M:%S")
+    else:
+        latest_date = "неизвестно"
 
 
     for kod, product in items.items():
@@ -198,8 +210,16 @@ async def handle_user_query(message: Message):
     items = await find_products_by_query(query)
 
     if items:
-        all_dates = [s['updated_at'] for p in items.values() for s in p['stocks'] if s.get('updated_at')]
-        latest_date = max(all_dates).strftime("%d.%m.%Y %H:%M:%S") if all_dates else "неизвестно"
+        async with async_session_maker() as session:
+            result = await session.execute(select(OstatkiMeta.last_updated).limit(1))
+            updated_at = result.scalar()
+
+        if updated_at:
+            from zoneinfo import ZoneInfo
+            updated_at = updated_at.astimezone(ZoneInfo("Europe/Moscow"))
+            latest_date = updated_at.strftime("%d.%m.%Y %H:%M:%S")
+        else:
+            latest_date = "неизвестно"
 
         for kod, product in items.items():
             sklad_lines = "\n".join(
@@ -243,8 +263,16 @@ async def handle_user_query(message: Message):
                 os.remove(file_name)
             return
         else:
-            all_dates = [s['updated_at'] for p in items.values() for s in p['stocks'] if s.get('updated_at')]
-            latest_date = max(all_dates).strftime("%d.%m.%Y %H:%M:%S") if all_dates else "неизвестно"
+            async with async_session_maker() as session:
+                result = await session.execute(select(OstatkiMeta.last_updated).limit(1))
+                updated_at = result.scalar()
+
+            if updated_at:
+                from zoneinfo import ZoneInfo
+                updated_at = updated_at.astimezone(ZoneInfo("Europe/Moscow"))
+                latest_date = updated_at.strftime("%d.%m.%Y %H:%M:%S")
+            else:
+                latest_date = "неизвестно"
 
 
             for kod, product in items.items():
