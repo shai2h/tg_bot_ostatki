@@ -115,7 +115,8 @@ async def find_products_by_query(query: str) -> dict:
                 }
             products[item.kod]['stocks'].append({
                 "sklad": item.sklad,
-                "ostatok": item.ostatok
+                "ostatok": item.ostatok,
+                "updated_at": item.updated_at
             })
 
         return products
@@ -153,7 +154,8 @@ async def find_products_by_query(query: str) -> dict:
                 }
             products[item.kod]['stocks'].append({
                 "sklad": item.sklad,
-                "ostatok": item.ostatok
+                "ostatok": item.ostatok,
+                "updated_at": item.updated_at
             })
 
         return products
@@ -224,7 +226,8 @@ async def find_products_by_text(query: str) -> dict:
                 }
             products[item.kod]['stocks'].append({
                 "sklad": item.sklad,
-                "ostatok": item.ostatok
+                "ostatok": item.ostatok,
+                "updated_at": item.updated_at
             })
 
         return products

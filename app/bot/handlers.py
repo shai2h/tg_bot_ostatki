@@ -166,7 +166,9 @@ async def handle_history_callback(callback: CallbackQuery):
         await callback.message.answer("\U0001F6D1 Товар не найден. Попробуйте уточнить запрос.")
         return
 
-    date_now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+    all_dates = [s['updated_at'] for p in items.values() for s in p['stocks'] if s.get('updated_at')]
+    latest_date = max(all_dates).strftime("%d.%m.%Y %H:%M:%S") if all_dates else "неизвестно"
+
 
     for kod, product in items.items():
         text = (
@@ -182,7 +184,7 @@ async def handle_history_callback(callback: CallbackQuery):
             text += f"   ▫️ {stock['sklad']}: {format_stock_quantity(stock['ostatok'])}\n"
 
 
-        text += f"\n📅 Актуально на: <i>{date_now}</i>"
+        text += f"\n📅 Актуально на: <i>{latest_date}</i>"
         await callback.message.answer(text)
 
 
@@ -196,7 +198,9 @@ async def handle_user_query(message: Message):
     items = await find_products_by_query(query)
 
     if items:
-        date_now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+        all_dates = [s['updated_at'] for p in items.values() for s in p['stocks'] if s.get('updated_at')]
+        latest_date = max(all_dates).strftime("%d.%m.%Y %H:%M:%S") if all_dates else "неизвестно"
+
         for kod, product in items.items():
             sklad_lines = "\n".join(
                 [f"   └ {s['sklad']}: <b>{format_stock_quantity(s['ostatok'])}</b>" for s in product["stocks"]]
@@ -209,7 +213,7 @@ async def handle_user_query(message: Message):
                 f"🔖 <b>Артикул:</b> {product['articul'] or '-'}\n"
                 f"💰 <b>Цена:</b> {product['price']} ₽\n\n"
                 f"📦 <b>Остатки по складам:</b>\n{sklad_lines}\n\n"
-                f"📅 <i>Актуально на: {date_now}</i>"
+                f"📅 <i>Актуально на: {latest_date}</i>"
             )
             # Если слишком много результатов — выгружаем в TXT
         if len(items) > 20:
@@ -239,7 +243,9 @@ async def handle_user_query(message: Message):
                 os.remove(file_name)
             return
         else:
-            date_now = datetime.now().strftime("%d.%m.%Y %H:%M:%S")
+            all_dates = [s['updated_at'] for p in items.values() for s in p['stocks'] if s.get('updated_at')]
+            latest_date = max(all_dates).strftime("%d.%m.%Y %H:%M:%S") if all_dates else "неизвестно"
+
 
             for kod, product in items.items():
                 text = (
@@ -254,7 +260,7 @@ async def handle_user_query(message: Message):
                 for stock in product['stocks']:
                     text += f"    - {stock['sklad']}: {format_stock_quantity(stock['ostatok'])}\n"
 
-                text += f"\n📅 Актуально на: <i>{date_now}</i>"
+                text += f"\n📅 Актуально на: <i>{latest_date}</i>"
                 await message.answer(text)
             return
 
