@@ -273,7 +273,7 @@ async def handle_user_query(message: Message):
             f"📦 <b>{result['name']}</b>\n"
             f"▫️ Код: {result['kod']}\n"
             f"▫️ Бренд: {result['brend']} | Вид: {result['vid']}\n"
-            f"▫️ Цена: {result['price']} ₽ | Остаток: {result['ostatok']} | Склад: {result['sklad']}\n"
+            f"▫️ Цена: {result['price']} ₽ | Наличие: {format_stock_quantity(result['ostatok'])} | Склад: {result['sklad']}\n"
             f"📈 Совпадение: {score}%\n\n"
         )
         text += block
