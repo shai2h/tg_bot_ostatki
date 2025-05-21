@@ -184,7 +184,7 @@ async def handle_history_callback(callback: CallbackQuery):
             text += f"   ▫️ {stock['sklad']}: {format_stock_quantity(stock['ostatok'])}\n"
 
 
-        text += f"\n📅 Актуально на: <i>{latest_date}</i>"
+        text += f"\n📅 Актуально на: <i>{latest_date}</i> по МСК"
         await callback.message.answer(text)
 
 
@@ -213,7 +213,7 @@ async def handle_user_query(message: Message):
                 f"🔖 <b>Артикул:</b> {product['articul'] or '-'}\n"
                 f"💰 <b>Цена:</b> {product['price']} ₽\n\n"
                 f"📦 <b>Остатки по складам:</b>\n{sklad_lines}\n\n"
-                f"📅 <i>Актуально на: {latest_date}</i>"
+                f"📅 <i>Актуально на: {latest_date}</i> по МСК"
             )
             # Если слишком много результатов — выгружаем в TXT
         if len(items) > 20:
@@ -260,7 +260,7 @@ async def handle_user_query(message: Message):
                 for stock in product['stocks']:
                     text += f"    - {stock['sklad']}: {format_stock_quantity(stock['ostatok'])}\n"
 
-                text += f"\n📅 Актуально на: <i>{latest_date}</i>"
+                text += f"\n📅 Актуально на: <i>{latest_date}</i> по МСК"
                 await message.answer(text)
             return
 
