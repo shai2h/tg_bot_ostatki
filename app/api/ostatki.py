@@ -1,50 +1,56 @@
-from fastapi import APIRouter, Body, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.database import async_session_maker
-from app.warehouse_stock.models import WarehouseStocks, OstatkiMeta
-from sqlalchemy import insert
-from typing import List, Dict, Any
-from sqlalchemy.dialects.postgresql import insert
-
 from datetime import datetime, timedelta, timezone
+from typing import List, Dict, Any
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from fastapi import APIRouter, Body, HTTPException
+from sqlalchemy import insert, delete, text
+import logging
+from pprint import pformat
+
+from app.db.database import async_session_maker
+from app.warehouse_stock.models import WarehouseStocks, OstatkiMeta  # импорт моделей
 
 router = APIRouter()
-
-moscow_tz = timezone(timedelta(hours=0))  # задаем часовой пояс +3
-
-import logging
-from pprint import pformat  # в начало файла
-
 logger = logging.getLogger(__name__)
+
+# Часовой пояс Москвы
+moscow_tz = timezone(timedelta(hours=0))
 
 @router.post("/api/ostatki")
 async def receive_ostatki(data: List[Dict[str, Any]] = Body(...)):
     try:
-        async with async_session_maker() as session:
-            now = datetime.now(moscow_tz).replace(tzinfo=None)
+        now = datetime.now(moscow_tz).replace(tzinfo=None)
 
-            for item in data:
+        # очистка таблицы с FK
+        async with async_session_maker() as cleanup_session:
+            try:
+                await cleanup_session.execute(text("DELETE FROM warehouse_stock"))
+                await cleanup_session.commit()
+                logger.info("Таблица warehouse_stock очищена (DELETE)")
+            except Exception as delete_error:
+                logger.error("Ошибка при очистке таблицы warehouse_stock")
+                logger.exception(delete_error)
+                raise
+
+        unique_data = {}
+        for item in data:
+            key = (item['kod'], item['sklad'])
+            unique_data[key] = item
+
+        final_data = list(unique_data.values())
+
+        # вставка данных
+        async with async_session_maker() as session:
+            for item in final_data:
                 try:
                     stmt = insert(WarehouseStocks).values(**item)
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=["kod", "sklad"],
-                        set_={
-                            "ostatok": item["ostatok"],
-                            "price": item["price"],
-                            "name": item["name"],
-                            "vid": item["vid"],
-                            "brend": item["brend"],
-                            "articul": item.get("articul"),
-                        }
-                    )
                     await session.execute(stmt)
                 except Exception as row_error:
-                    logger.error("шибка при вставке строки:\n%s", pformat(item))
+                    logger.error("Ошибка при вставке строки:\n%s", pformat(item))
                     logger.exception(row_error)
-                    raise  # пробросим дальше — чтобы сразу видеть причину
+                    raise
 
             try:
-                meta_stmt = insert(OstatkiMeta).values(id=1, last_updated=now)
+                meta_stmt = pg_insert(OstatkiMeta).values(id=1, last_updated=now)
                 meta_stmt = meta_stmt.on_conflict_do_update(
                     index_elements=["id"],
                     set_={"last_updated": now}
@@ -61,5 +67,3 @@ async def receive_ostatki(data: List[Dict[str, Any]] = Body(...)):
     except Exception as e:
         logger.exception("Общая ошибка API /api/ostatki")
         raise HTTPException(status_code=500, detail=str(e))
-
-
