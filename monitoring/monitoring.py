@@ -105,14 +105,14 @@ class SystemMonitor:
             if time_diff > threshold:
                 # Проблема: нет запросов
                 if current_status['status'] != 'error':
-                    message = f"🔴 Проблема: запросы с 1С не приходят уже {int(time_diff.total_seconds()/60)} минут"
+                    message = f"Проблема: запросы с 1С не приходят уже {int(time_diff.total_seconds()/60)} минут"
                     await self._update_status('api_1c', 'error', message)
                     await self.telegram.send_alert(message)
                     await self._log_event('api_1c', 'status_change', message, 'error')
             else:
                 # Все хорошо
                 if current_status['status'] == 'error':
-                    message = "✅ ОК: Запросы с 1С вернулись к работе"
+                    message = "ОК: Запросы с 1С вернулись к работе"
                     await self._update_status('api_1c', 'ok', message)
                     await self.telegram.send_recovery(message)
                     await self._log_event('api_1c', 'recovery', message, 'info')
@@ -131,7 +131,7 @@ class SystemMonitor:
                         # API отвечает
                         current_status = await self._get_component_status('telegram_bot')
                         if current_status['status'] == 'error':
-                            message = "✅ ОК: Telegram бот вернулся к работе"
+                            message = "ОК: Telegram бот вернулся к работе"
                             await self._update_status('telegram_bot', 'ok', message)
                             await self.telegram.send_recovery(message)
                             await self._log_event('telegram_bot', 'recovery', message, 'info')
@@ -144,7 +144,7 @@ class SystemMonitor:
             # Бот не отвечает
             current_status = await self._get_component_status('telegram_bot')
             if current_status['status'] != 'error':
-                message = f"🔴 Проблема: Telegram бот не отвечает. Пытаюсь перезагрузить..."
+                message = f"Проблема: Telegram бот не отвечает. Пытаюсь перезагрузить..."
                 await self._update_status('telegram_bot', 'error', str(e))
                 await self.telegram.send_alert(message)
                 await self._log_event('telegram_bot', 'status_change', message, 'error')
@@ -177,7 +177,7 @@ class SystemMonitor:
                 )
                 
                 if status_result.stdout.strip() == 'active':
-                    return "✅ Служба успешно перезапущена"
+                    return "Служба успешно перезапущена"
                 else:
                     return f"⚠️ Служба перезапущена, но статус: {status_result.stdout.strip()}"
             else:
