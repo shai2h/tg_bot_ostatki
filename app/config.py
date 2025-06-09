@@ -1,3 +1,4 @@
+
 from pydantic_settings import BaseSettings
 from pydantic import model_validator
 
@@ -11,10 +12,20 @@ class Settings(BaseSettings):
     DATABASE_URL: str = ""
 
     BOT_TOKEN: str
-
-    #API
+    
+    # Настройки мониторинг-бота
+    MONITOR_BOT_TOKEN: str  # Токен второго бота для мониторинга (Zabbix)
+    MONITOR_CHAT_ID: str    # ID канала куда слать уведомления (наш Zabbix канал)
+    
+    # API настройки
     API_HOST: str
     API_PORT: int
+    
+    # Настройки мониторинга
+    API_CHECK_INTERVAL: int = 60        # Интервал проверки API (секунды)
+    API_TIMEOUT_THRESHOLD: int = 300    # Время без запросов = проблема (секунды)
+    BOT_CHECK_INTERVAL: int = 120       # Интервал проверки бота (секунды)
+    BOT_RESTART_ATTEMPTS: int = 3       # Попытки перезапуска бота
 
     @model_validator(mode='before')
     @classmethod
