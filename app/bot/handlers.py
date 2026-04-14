@@ -30,6 +30,10 @@ from app.services.search import (
 from app.warehouse_stock.models import OstatkiMeta, WarehouseStocks
 
 
+def _is_max_event(event: Message | CallbackQuery) -> bool:
+    return getattr(event, "platform", "") == "max"
+
+
 def _main_menu_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -40,6 +44,16 @@ def _main_menu_keyboard() -> ReplyKeyboardMarkup:
             ]
         ],
         resize_keyboard=True,
+    )
+
+
+def _main_menu_inline_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Инструкция", callback_data="menu:instruction")],
+            [InlineKeyboardButton(text="Полный отчет XLSX", callback_data="menu:report")],
+            [InlineKeyboardButton(text="История запросов", callback_data="menu:history")],
+        ]
     )
 
 
@@ -64,7 +78,7 @@ def register_handlers(router) -> None:
             "• <b>Инструкция</b>\n"
             "• <b>Полный отчет XLSX</b>\n"
             "• <b>История запросов</b>",
-            reply_markup=_main_menu_keyboard(),
+            reply_markup=_main_menu_inline_keyboard() if _is_max_event(message) else _main_menu_keyboard(),
         )
 
     @router.message(F.text.casefold() == "инструкция")
@@ -167,6 +181,42 @@ def register_handlers(router) -> None:
         query = callback.data.replace("history:", "", 1)
         await callback.answer("Ищу...")
         await _send_search_results(callback.message, callback.from_user.id, query)
+
+    @router.callback_query(F.data == "menu:instruction")
+    async def handle_menu_instruction(callback: CallbackQuery) -> None:
+        await callback.answer()
+        text = (
+            "<b>Инструкция по использованию</b>\n\n"
+            "Введите <b>название товара</b> или <b>артикул</b>, например:\n"
+            "<code>CM-107</code>\n"
+            "<code>ОМ-350</code>\n\n"
+            "Можно искать по конкретному складу, указав город перед товаром:\n"
+            "<code>Москва CM-107</code>\n"
+            "<code>Екатеринбург ОМ-350</code>\n\n"
+            "История запросов хранит последние обращения и позволяет быстро повторить поиск."
+        )
+        await callback.message.answer(text, reply_markup=_main_menu_inline_keyboard())
+
+    @router.callback_query(F.data == "menu:history")
+    async def handle_menu_history(callback: CallbackQuery) -> None:
+        await callback.answer()
+        history = await get_user_query_history(callback.from_user.id)
+        if not history:
+            await callback.message.answer("История пуста.", reply_markup=_main_menu_inline_keyboard())
+            return
+
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=query, callback_data=f"history:{query}")]
+                for query in history[:5]
+            ]
+        )
+        await callback.message.answer("Выберите запрос из истории:", reply_markup=keyboard)
+
+    @router.callback_query(F.data == "menu:report")
+    async def handle_menu_report(callback: CallbackQuery) -> None:
+        await callback.answer("Собираю отчет...")
+        await handle_full_report(callback.message)
 
     @router.message(F.text)
     async def handle_user_query(message: Message) -> None:
