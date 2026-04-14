@@ -88,7 +88,7 @@ async def get_bot_runtime() -> BotRuntime:
         return _runtime
 
     bot, dp, router = _build_bot_with_fallbacks()
-    if dp is not None:
-        register_warehouse_handlers(dp)
+    if router is not None:
+        register_warehouse_handlers(router)
     _runtime = BotRuntime(bot=bot, dp=dp, router=router)
     return _runtime
