@@ -1,129 +1,69 @@
-# 📦 Telegram Bot остатков
+﻿# FastAPI + MAX Bot
 
-## 🔧 Описание
-Этот бот позволяет искать товары по складам и получать актуальные остатки из 1С.
+## What Was Added
 
----
+- `obabot` integration for Max/Telegram-compatible handlers
+- `POST /webhook` endpoint for MAX webhook delivery
+- `POST /process_message` endpoint used by bot handlers
+- `/start`, echo replies, inline keyboard, callback handling, and FSM state
+- `uvicorn` launch with `polling` or `webhook` mode
 
-### 1. Установить зависимости
+## Install
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
----
-
-### 2. PostgreSQL
-
-Создай базу данных и таблицы. Пример URL в `.env`:
+## Environment
 
 ```env
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/postgres
+DB_HOST=localhost
+DB_PORT=5432
+DB_USER=postgres
+DB_PASS=postgres
+DB_NAME=postgres
+
+API_HOST=127.0.0.1
+API_PORT=8000
+
+MAX_TOKEN=your_max_token
+BOT_TOKEN=optional_telegram_token
+BOT_RUN_MODE=polling
+
+MAX_WEBHOOK_URL=https://your-domain.com/webhook
+MAX_WEBHOOK_SECRET=your_secret_value
 ```
 
-Применение миграций или создание вручную:
+## Run
 
-```sql
-CREATE TABLE warehouse_stock (
-    id SERIAL PRIMARY KEY,
-    articul VARCHAR,
-    name VARCHAR NOT NULL,
-    vid VARCHAR,
-    brend VARCHAR,
-    kod VARCHAR,
-    price VARCHAR,
-    ostatok VARCHAR,
-    sklad VARCHAR,
-    UNIQUE (kod, sklad)
-);
-
-CREATE TABLE user_query_log (
-    id SERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL,
-    query VARCHAR NOT NULL,
-    timestamp TIMESTAMP NOT NULL
-);
-```
-
----
-
-### 3. Настройте переменные окружения
-
-Создай `.env` файл или настрой переменные напрямую:
-
-```env
-BOT_TOKEN=токен_твоего_бота
-DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/postgres
-```
-
----
-
-### 4. Запусти бота
+Development with long polling:
 
 ```bash
-python run.py
+python run.py --mode polling
 ```
 
----
+Production with webhook:
 
-## 📦 Доступные команды
-
-- `/start` — Главное меню
-- `Инструкция` — Как использовать
-- `История запросов` — Последние запросы пользователя
-- `Полный отчет XLSX` — Выгрузка остатков по складам
-
----
-
-## 📁 Структура проекта
-
-```text
-tg_bot_ostatki/
-├── app/
-│   ├── bot/
-│   │   └── handlers.py
-│   ├── db/
-│   │   └── database.py
-│   ├── services/
-│   │   └── search.py
-│   └── warehouse_stock/
-│       └── models.py
-├── run.py
-└── requirements.txt
+```bash
+python run.py --mode webhook
 ```
 
----
+Direct `uvicorn` launch also works:
 
-## ⚙️ systemd юнит (для Linux сервера)
-
-```ini
-[Unit]
-Description=Telegram Warehouse Bot
-After=network.target postgresql.service
-
-[Service]
-User=user
-WorkingDirectory=/home/user/tg_bot_ostatki
-ExecStart=/home/user/tg_bot_ostatki/.venv/bin/python run.py
-Restart=always
-Environment="BOT_TOKEN=..." "DATABASE_URL=..."
-
-[Install]
-WantedBy=multi-user.target
+```bash
+uvicorn app.api.main:app --host 127.0.0.1 --port 8000
 ```
 
----
+## MAX Notes
 
-## 🧪 Тестирование
+- Webhook subscription is registered against `https://platform-api.max.ru/subscriptions`
+- MAX sends the webhook secret in `X-Max-Bot-Api-Secret`
+- Message formatting uses `markdown`
+- Inline keyboard buttons include both `callback` and `link`
 
-Можно использовать `pytest` для модульных тестов.
+## Endpoints
 
----
-
-## 🧼 Очистка временных файлов
-
-Excel и TXT-файлы удаляются автоматически после отправки пользователю.
-
----
+- `POST /api/ostatki`
+- `POST /process_message`
+- `POST /webhook`
+- `GET /health`
