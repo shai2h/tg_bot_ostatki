@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -30,8 +31,30 @@ from app.services.search import (
 from app.warehouse_stock.models import OstatkiMeta, WarehouseStocks
 
 
+_HTML_TAG_RE = re.compile(r"</?(?:b|strong|i|em|u|s|code|pre|a)(?:\s+[^>]*)?>", re.IGNORECASE)
+
+
 def _is_max_event(event: Message | CallbackQuery) -> bool:
     return getattr(event, "platform", "") == "max"
+
+
+def _plain_text_for_max(text: str) -> str:
+    text = text.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
+    return _HTML_TAG_RE.sub("", text)
+
+
+async def _answer(message: Message, text: str, **kwargs) -> None:
+    if _is_max_event(message):
+        text = _plain_text_for_max(text)
+        kwargs.pop("parse_mode", None)
+    await message.answer(text, **kwargs)
+
+
+async def _answer_document(message: Message, document: FSInputFile, **kwargs) -> None:
+    caption = kwargs.get("caption")
+    if caption and _is_max_event(message):
+        kwargs["caption"] = _plain_text_for_max(caption)
+    await message.answer_document(document, **kwargs)
 
 
 def _main_menu_keyboard() -> ReplyKeyboardMarkup:
@@ -71,7 +94,8 @@ async def _get_last_updated_label() -> str:
 def register_handlers(router) -> None:
     @router.message(Command("start"))
     async def handle_start(message: Message) -> None:
-        await message.answer(
+        await _answer(
+            message,
             "<b>Добро пожаловать в бот остатков!</b>\n\n"
             "Введите название товара или артикул, и я покажу актуальные остатки по складам.\n\n"
             "Команды в меню:\n"
@@ -83,17 +107,7 @@ def register_handlers(router) -> None:
 
     @router.message(F.text.casefold() == "инструкция")
     async def handle_instruction(message: Message) -> None:
-        text = (
-            "<b>Инструкция по использованию</b>\n\n"
-            "Введите <b>название товара</b> или <b>артикул</b>, например:\n"
-            "<code>CM-107</code>\n"
-            "<code>ОМ-350</code>\n\n"
-            "Можно искать по конкретному складу, указав город перед товаром:\n"
-            "<code>Москва CM-107</code>\n"
-            "<code>Екатеринбург ОМ-350</code>\n\n"
-            "История запросов хранит последние обращения и позволяет быстро повторить поиск."
-        )
-        await message.answer(text)
+        await _send_instruction(message)
 
     @router.message(F.text.casefold() == "полный отчет xlsx")
     async def handle_full_report(message: Message) -> None:
@@ -102,7 +116,7 @@ def register_handlers(router) -> None:
             rows = result.fetchall()
 
         if not rows:
-            await message.answer("Нет данных для отчета.")
+            await _answer(message, "Нет данных для отчета.")
             return
 
         all_cities = sorted({row.sklad for row in rows})
@@ -152,7 +166,8 @@ def register_handlers(router) -> None:
                     col[0].fill = fill
 
             wb.save(file_path)
-            await message.answer_document(
+            await _answer_document(
+                message,
                 FSInputFile(file_path),
                 caption="Полный отчет по складам",
             )
@@ -165,7 +180,7 @@ def register_handlers(router) -> None:
         user_id = message.from_user.id
         history = await get_user_query_history(user_id)
         if not history:
-            await message.answer("История пуста.")
+            await _answer(message, "История пуста.")
             return
 
         keyboard = InlineKeyboardMarkup(
@@ -174,7 +189,7 @@ def register_handlers(router) -> None:
                 for query in history[:5]
             ]
         )
-        await message.answer("Выберите запрос из истории:", reply_markup=keyboard)
+        await _answer(message, "Выберите запрос из истории:", reply_markup=keyboard)
 
     @router.callback_query(F.data.startswith("history:"))
     async def handle_history_callback(callback: CallbackQuery) -> None:
@@ -185,24 +200,14 @@ def register_handlers(router) -> None:
     @router.callback_query(F.data == "menu:instruction")
     async def handle_menu_instruction(callback: CallbackQuery) -> None:
         await callback.answer()
-        text = (
-            "<b>Инструкция по использованию</b>\n\n"
-            "Введите <b>название товара</b> или <b>артикул</b>, например:\n"
-            "<code>CM-107</code>\n"
-            "<code>ОМ-350</code>\n\n"
-            "Можно искать по конкретному складу, указав город перед товаром:\n"
-            "<code>Москва CM-107</code>\n"
-            "<code>Екатеринбург ОМ-350</code>\n\n"
-            "История запросов хранит последние обращения и позволяет быстро повторить поиск."
-        )
-        await callback.message.answer(text, reply_markup=_main_menu_inline_keyboard())
+        await _send_instruction(callback.message, reply_markup=_main_menu_inline_keyboard())
 
     @router.callback_query(F.data == "menu:history")
     async def handle_menu_history(callback: CallbackQuery) -> None:
         await callback.answer()
         history = await get_user_query_history(callback.from_user.id)
         if not history:
-            await callback.message.answer("История пуста.", reply_markup=_main_menu_inline_keyboard())
+            await _answer(callback.message, "История пуста.", reply_markup=_main_menu_inline_keyboard())
             return
 
         keyboard = InlineKeyboardMarkup(
@@ -211,7 +216,7 @@ def register_handlers(router) -> None:
                 for query in history[:5]
             ]
         )
-        await callback.message.answer("Выберите запрос из истории:", reply_markup=keyboard)
+        await _answer(callback.message, "Выберите запрос из истории:", reply_markup=keyboard)
 
     @router.callback_query(F.data == "menu:report")
     async def handle_menu_report(callback: CallbackQuery) -> None:
@@ -252,7 +257,8 @@ async def _send_search_results(message: Message, user_id: int, query: str) -> No
                 with open(file_name, "w", encoding="utf-8") as file:
                     file.write("".join(lines))
 
-                await message.answer_document(
+                await _answer_document(
+                    message,
                     FSInputFile(file_name),
                     caption=f"Найдено {len(items)} товаров по запросу: {query}",
                 )
@@ -275,14 +281,14 @@ async def _send_search_results(message: Message, user_id: int, query: str) -> No
                 f"🚚 <b>Остатки по складам:</b>\n{sklad_lines}\n\n"
                 f"🕒 <i>Актуально на: {latest_date}</i> по МСК"
             )
-            await message.answer(text)
+            await _answer(message, text)
         return
 
     fuzzy_results = await fuzzy_find_products(query)
     filtered = [result for result in fuzzy_results if result["score"] > 70]
 
     if not filtered:
-        await message.answer("Товар не найден. Попробуйте уточнить запрос.")
+        await _answer(message, "Товар не найден. Попробуйте уточнить запрос.")
         return
 
     text = f"Товар <code>{query}</code> не найден, но найдены похожие позиции:\n\n"
@@ -297,4 +303,18 @@ async def _send_search_results(message: Message, user_id: int, query: str) -> No
             f"📈 Совпадение: {score}%\n\n"
         )
 
-    await message.answer(text)
+    await _answer(message, text)
+
+
+async def _send_instruction(message: Message, **kwargs) -> None:
+    text = (
+        "<b>Инструкция по использованию</b>\n\n"
+        "Введите <b>название товара</b> или <b>артикул</b>, например:\n"
+        "<code>CM-107</code>\n"
+        "<code>ОМ-350</code>\n\n"
+        "Можно искать по конкретному складу, указав город перед товаром:\n"
+        "<code>Москва CM-107</code>\n"
+        "<code>Екатеринбург ОМ-350</code>\n\n"
+        "История запросов хранит последние обращения и позволяет быстро повторить поиск."
+    )
+    await _answer(message, text, **kwargs)
