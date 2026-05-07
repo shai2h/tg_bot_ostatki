@@ -32,6 +32,27 @@ from app.warehouse_stock.models import OstatkiMeta, WarehouseStocks
 
 
 _HTML_TAG_RE = re.compile(r"</?(?:b|strong|i|em|u|s|code|pre|a)(?:\s+[^>]*)?>", re.IGNORECASE)
+PRICE_LIST_URL = "https://rosholod.org/price-lists/OstatkiPoStolbcam.xls"
+PRICE_LIST_TEXT = (
+    "\u0410\u043a\u0442\u0443\u0430\u043b\u044c\u043d\u044b\u0439 "
+    "\u043f\u0440\u0430\u0439\u0441 \u043c\u043e\u0436\u043d\u043e "
+    "\u0441\u043a\u0430\u0447\u0430\u0442\u044c \u043f\u043e "
+    f"\u0441\u0441\u044b\u043b\u043a\u0435:\n{PRICE_LIST_URL}"
+)
+PRICE_LIST_BUTTON_TEXT = "\u0421\u043a\u0430\u0447\u0430\u0442\u044c \u043f\u0440\u0430\u0439\u0441"
+
+
+def _price_list_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=PRICE_LIST_BUTTON_TEXT,
+                    url=PRICE_LIST_URL,
+                )
+            ]
+        ]
+    )
 
 
 def _is_max_event(event: Message | CallbackQuery) -> bool:
@@ -62,7 +83,7 @@ def _main_menu_keyboard() -> ReplyKeyboardMarkup:
         keyboard=[
             [
                 KeyboardButton(text="Инструкция"),
-                KeyboardButton(text="Полный отчет XLSX"),
+                KeyboardButton(text=PRICE_LIST_BUTTON_TEXT),
                 KeyboardButton(text="История запросов"),
             ]
         ],
@@ -74,7 +95,7 @@ def _main_menu_inline_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="Инструкция", callback_data="menu:instruction")],
-            [InlineKeyboardButton(text="Полный отчет XLSX", callback_data="menu:report")],
+            [InlineKeyboardButton(text=PRICE_LIST_BUTTON_TEXT, url=PRICE_LIST_URL)],
             [InlineKeyboardButton(text="История запросов", callback_data="menu:history")],
         ]
     )
@@ -100,7 +121,7 @@ def register_handlers(router) -> None:
             "Введите название товара или артикул, и я покажу актуальные остатки по складам.\n\n"
             "Команды в меню:\n"
             "• <b>Инструкция</b>\n"
-            "• <b>Полный отчет XLSX</b>\n"
+            f"• <b>{PRICE_LIST_BUTTON_TEXT}</b>\n"
             "• <b>История запросов</b>",
             reply_markup=_main_menu_inline_keyboard() if _is_max_event(message) else _main_menu_keyboard(),
         )
@@ -110,7 +131,13 @@ def register_handlers(router) -> None:
         await _send_instruction(message)
 
     @router.message(F.text.casefold() == "полный отчет xlsx")
+    @router.message(F.text.casefold() == "\u0441\u043a\u0430\u0447\u0430\u0442\u044c \u043f\u0440\u0430\u0439\u0441")
     async def handle_full_report(message: Message) -> None:
+        await _answer(message, PRICE_LIST_TEXT, reply_markup=_price_list_keyboard())
+        return
+
+        # Legacy XLSX generation is intentionally kept below for possible reuse.
+        # It is disabled because the current flow sends a static price-list link.
         async with async_session_maker() as session:
             result = await session.execute(WarehouseStocks.__table__.select())
             rows = result.fetchall()
@@ -220,7 +247,7 @@ def register_handlers(router) -> None:
 
     @router.callback_query(F.data == "menu:report")
     async def handle_menu_report(callback: CallbackQuery) -> None:
-        await callback.answer("Собираю отчет...")
+        await callback.answer()
         await handle_full_report(callback.message)
 
     @router.message(F.text)

@@ -10,13 +10,13 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.db.database import async_session_maker
 from app.config import settings
 from .models import MonitoringStatus, MonitoringLog
-from .telegram_notifier import TelegramNotifier
+from .max_notifier import MaxMonitorNotifier
 
 logger = logging.getLogger(__name__)
 
 class SystemMonitor:
     def __init__(self):
-        self.telegram = TelegramNotifier()
+        self.notifier = MaxMonitorNotifier()
         self.is_running = False
         
     async def start_monitoring(self):
@@ -107,14 +107,14 @@ class SystemMonitor:
                 if current_status['status'] != 'error':
                     message = f"🔴 Проблема: запросы с 1С не приходят уже {int(time_diff.total_seconds()/60)} минут"
                     await self._update_status('api_1c', 'error', message)
-                    await self.telegram.send_alert(message)
+                    await self.notifier.send_alert(message)
                     await self._log_event('api_1c', 'status_change', message, 'error')
             else:
                 # Все хорошо
                 if current_status['status'] == 'error':
                     message = "✅ ОК: Запросы с 1С вернулись к работе"
                     await self._update_status('api_1c', 'ok', message)
-                    await self.telegram.send_recovery(message)
+                    await self.notifier.send_recovery(message)
                     await self._log_event('api_1c', 'recovery', message, 'info')
                 elif current_status['status'] != 'ok':
                     await self._update_status('api_1c', 'ok', 'API 1С работает нормально')
@@ -133,7 +133,7 @@ class SystemMonitor:
                         if current_status['status'] == 'error':
                             message = "✅ ОК: Telegram бот вернулся к работе"
                             await self._update_status('telegram_bot', 'ok', message)
-                            await self.telegram.send_recovery(message)
+                            await self.notifier.send_recovery(message)
                             await self._log_event('telegram_bot', 'recovery', message, 'info')
                         elif current_status['status'] != 'ok':
                             await self._update_status('telegram_bot', 'ok', 'Telegram бот работает')
@@ -146,13 +146,13 @@ class SystemMonitor:
             if current_status['status'] != 'error':
                 message = f"🔴 Проблема: Telegram бот не отвечает. Пытаюсь перезагрузить..."
                 await self._update_status('telegram_bot', 'error', str(e))
-                await self.telegram.send_alert(message)
+                await self.notifier.send_alert(message)
                 await self._log_event('telegram_bot', 'status_change', message, 'error')
                 
                 # Пытаемся перезапустить
                 restart_result = await self._restart_telegram_bot()
                 restart_message = f"Результат перезапуска: {restart_result}"
-                await self.telegram.send_alert(restart_message)
+                await self.notifier.send_alert(restart_message)
                 await self._log_event('telegram_bot', 'restart_attempt', restart_message, 'warning')
     
     async def _restart_telegram_bot(self) -> str:
