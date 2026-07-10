@@ -1,0 +1,14 @@
+services:
+  app:
+    environment:
+      DB_HOST: ${EXISTING_DB_HOST}
+      DB_PORT: ${EXISTING_DB_PORT:-5432}
+    depends_on: {}
+    networks:
+      - default
+      - existing_db
+
+networks:
+  existing_db:
+    external: true
+    name: ${EXISTING_DB_NETWORK}

@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     BOT_CHECK_INTERVAL: int = 120
     BOT_RESTART_ATTEMPTS: int = 3
 
+    ONE_C_STALE_AFTER_SECONDS: int = 300
+    LOG_LEVEL: str = "INFO"
+
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",

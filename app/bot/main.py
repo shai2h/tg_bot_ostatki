@@ -3,7 +3,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
+from aiogram import BaseMiddleware
+from aiogram.types import CallbackQuery, Message, TelegramObject
+
 from app.bot.handlers import register_handlers as register_warehouse_handlers
+from app.bot.health import bot_health
 from app.config import settings
 
 logger = logging.getLogger(__name__)
@@ -15,6 +19,20 @@ except ImportError as exc:  # pragma: no cover
     _obabot_import_error = exc
 else:
     _obabot_import_error = None
+
+
+class BotHealthMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event: TelegramObject, data: dict):
+        if isinstance(event, (Message, CallbackQuery)):
+            bot_health.record_incoming()
+        try:
+            result = await handler(event, data)
+            if isinstance(event, (Message, CallbackQuery)):
+                bot_health.record_successful_send()
+            return result
+        except Exception as exc:
+            bot_health.record_error(exc)
+            raise
 
 
 @dataclass(slots=True)
@@ -31,7 +49,13 @@ class BotRuntime:
         if not self.enabled:
             logger.warning("Bot runtime is disabled: no tokens or obabot unavailable")
             return
-        await self.dp.start_polling(self.bot)
+        logger.info("Bot polling loop started mode=polling")
+        try:
+            await self.dp.start_polling(self.bot)
+        except Exception as exc:
+            bot_health.record_error(exc)
+            logger.exception("Bot polling loop failed")
+            raise
 
     async def stop(self) -> None:
         if self.bot is None:
@@ -39,6 +63,8 @@ class BotRuntime:
         session = getattr(self.bot, "session", None)
         if session is not None:
             await session.close()
+        bot_health.mark_runtime_stopped()
+        logger.info("Bot runtime stopped")
 
 
 def _build_bot_with_fallbacks():
@@ -77,6 +103,14 @@ def _build_bot_with_fallbacks():
 _runtime: BotRuntime | None = None
 
 
+def _register_health_middleware(dp: object) -> None:
+    middleware = BotHealthMiddleware()
+    if hasattr(dp, "message"):
+        dp.message.middleware(middleware)
+    if hasattr(dp, "callback_query"):
+        dp.callback_query.middleware(middleware)
+
+
 async def get_bot_runtime() -> BotRuntime:
     global _runtime
 
@@ -88,7 +122,19 @@ async def get_bot_runtime() -> BotRuntime:
         return _runtime
 
     bot, dp, router = _build_bot_with_fallbacks()
+    handlers_registered = False
     if router is not None:
         register_warehouse_handlers(router)
+        handlers_registered = True
+    elif dp is not None:
+        logger.warning("obabot router is missing; warehouse handlers were not registered")
+
+    if dp is not None:
+        _register_health_middleware(dp)
+
     _runtime = BotRuntime(bot=bot, dp=dp, router=router)
+    bot_health.mark_runtime_started(
+        settings.BOT_RUN_MODE,
+        handlers_registered=handlers_registered,
+    )
     return _runtime

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
 
+from app.bot.health import bot_health
 from app.bot.shared import build_max_inline_keyboard
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 MAX_API_BASE_URL = "https://platform-api.max.ru"
@@ -53,15 +57,21 @@ async def send_message(
         "attachments": build_max_inline_keyboard(),
     }
 
-    async with httpx.AsyncClient(base_url=MAX_API_BASE_URL, timeout=10.0) as client:
-        response = await client.post(
-            "/messages",
-            headers=_headers(),
-            params=recipient,
-            json=body,
-        )
-        response.raise_for_status()
-        return response.json()
+    try:
+        async with httpx.AsyncClient(base_url=MAX_API_BASE_URL, timeout=10.0) as client:
+            response = await client.post(
+                "/messages",
+                headers=_headers(),
+                params=recipient,
+                json=body,
+            )
+            response.raise_for_status()
+            bot_health.record_successful_send()
+            return response.json()
+    except Exception as exc:
+        bot_health.record_error(exc)
+        logger.exception("MAX API send_message failed")
+        raise
 
 
 async def answer_callback(callback_id: str, text: str) -> dict[str, Any]:
@@ -74,15 +84,21 @@ async def answer_callback(callback_id: str, text: str) -> dict[str, Any]:
         },
     }
 
-    async with httpx.AsyncClient(base_url=MAX_API_BASE_URL, timeout=10.0) as client:
-        response = await client.post(
-            "/answers",
-            headers=_headers(),
-            params={"callback_id": callback_id},
-            json=body,
-        )
-        response.raise_for_status()
-        return response.json()
+    try:
+        async with httpx.AsyncClient(base_url=MAX_API_BASE_URL, timeout=10.0) as client:
+            response = await client.post(
+                "/answers",
+                headers=_headers(),
+                params={"callback_id": callback_id},
+                json=body,
+            )
+            response.raise_for_status()
+            bot_health.record_successful_send()
+            return response.json()
+    except Exception as exc:
+        bot_health.record_error(exc)
+        logger.exception("MAX API answer_callback failed")
+        raise
 
 
 async def ensure_webhook_subscription() -> dict[str, Any] | None:

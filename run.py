@@ -4,9 +4,11 @@ import os
 import uvicorn
 
 from app.config import settings
+from app.logging_config import configure_logging
 
 
 def main() -> None:
+    configure_logging()
     parser = argparse.ArgumentParser(description="Run FastAPI + MAX bot")
     parser.add_argument(
         "--mode",

@@ -8,15 +8,21 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
-from starlette.responses import JSONResponse
+from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 
+from app.api.health import router as health_router
 from app.api.ostatki import router as ostatki_router
+from app.bot.health import bot_health
 from app.bot.main import get_bot_runtime
 from app.bot.max_client import answer_callback, ensure_webhook_subscription, resolve_webhook_recipient, send_message
 from app.bot.shared import call_process_message, render_markdown_reply
 from app.config import settings
+from app.db.database import async_session_maker
+from app.logging_config import configure_logging
 
+configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -42,6 +48,11 @@ class MaxWebhookMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+async def _verify_database_connection() -> None:
+    async with async_session_maker() as session:
+        await session.execute(text("SELECT 1"))
+
+
 async def _handle_start_event(update: dict[str, Any]) -> None:
     recipient = resolve_webhook_recipient(update)
     text = (
@@ -58,6 +69,7 @@ async def _handle_message_event(update: dict[str, Any]) -> None:
     if not user_text:
         return
 
+    bot_health.record_incoming()
     processed = await call_process_message(
         user_text,
         user_id=(message.get("sender") or {}).get("user_id"),
@@ -65,6 +77,7 @@ async def _handle_message_event(update: dict[str, Any]) -> None:
     )
     reply_text = render_markdown_reply(user_text, processed)
     await send_message(resolve_webhook_recipient(update), reply_text)
+    bot_health.record_successful_send()
 
 
 async def _handle_callback_event(update: dict[str, Any]) -> None:
@@ -74,6 +87,7 @@ async def _handle_callback_event(update: dict[str, Any]) -> None:
         raise HTTPException(status_code=400, detail="callback_id is required")
 
     payload = callback.get("payload") or "repeat_last"
+    bot_health.record_incoming()
     processed = await call_process_message(
         payload,
         user_id=((callback.get("message") or {}).get("sender") or {}).get("user_id"),
@@ -81,6 +95,7 @@ async def _handle_callback_event(update: dict[str, Any]) -> None:
     )
     reply_text = render_markdown_reply(payload, processed)
     await answer_callback(callback_id, reply_text)
+    bot_health.record_successful_send()
 
 
 async def dispatch_max_webhook(update: dict[str, Any]) -> None:
@@ -100,6 +115,19 @@ async def dispatch_max_webhook(update: dict[str, Any]) -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    logger.info(
+        "Application startup host=%s port=%s bot_mode=%s",
+        settings.API_HOST,
+        settings.API_PORT,
+        settings.BOT_RUN_MODE,
+    )
+
+    try:
+        await _verify_database_connection()
+        logger.info("Database connection verified")
+    except Exception:
+        logger.exception("Database connection failed during startup")
+
     runtime = None
     polling_task: asyncio.Task | None = None
 
@@ -107,15 +135,24 @@ async def lifespan(_: FastAPI):
         runtime = await get_bot_runtime()
         if runtime.enabled:
             polling_task = asyncio.create_task(runtime.start_polling())
+            logger.info("Bot polling task scheduled")
+        else:
+            logger.warning("Bot runtime is disabled; polling was not started")
     elif settings.BOT_RUN_MODE == "webhook":
+        bot_health.mark_runtime_started("webhook", handlers_registered=False)
         try:
             await ensure_webhook_subscription()
+            logger.info("MAX webhook subscription registered")
         except Exception:
+            bot_health.record_error("Failed to register MAX webhook subscription")
             logger.exception("Failed to register MAX webhook subscription")
+    else:
+        logger.warning("Unknown BOT_RUN_MODE=%s", settings.BOT_RUN_MODE)
 
     try:
         yield
     finally:
+        logger.info("Application shutdown started")
         if polling_task is not None:
             polling_task.cancel()
             try:
@@ -124,6 +161,7 @@ async def lifespan(_: FastAPI):
                 pass
         if runtime is not None:
             await runtime.stop()
+        logger.info("Application shutdown completed")
 
 
 app = FastAPI(
@@ -133,6 +171,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.add_middleware(MaxWebhookMiddleware)
+app.include_router(health_router)
 app.include_router(ostatki_router)
 
 
