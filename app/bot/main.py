@@ -103,12 +103,60 @@ def _build_bot_with_fallbacks():
 _runtime: BotRuntime | None = None
 
 
-def _register_health_middleware(dp: object) -> None:
+def _try_register_middleware_on_observer(
+    observer: object,
+    middleware: BotHealthMiddleware,
+    *,
+    observer_name: str,
+    owner_label: str,
+) -> bool:
+    middleware_method = getattr(observer, "middleware", None)
+    if not callable(middleware_method):
+        return False
+
+    middleware_method(middleware)
+    logger.info(
+        "Health middleware registered on %s.%s (%s)",
+        owner_label,
+        observer_name,
+        type(observer).__name__,
+    )
+    return True
+
+
+def _register_health_middleware(dp: object | None, router: object | None = None) -> None:
     middleware = BotHealthMiddleware()
-    if hasattr(dp, "message"):
-        dp.message.middleware(middleware)
-    if hasattr(dp, "callback_query"):
-        dp.callback_query.middleware(middleware)
+    registered = False
+
+    if router is not None:
+        for observer_name in ("message", "callback_query"):
+            observer = getattr(router, observer_name, None)
+            if observer is not None and _try_register_middleware_on_observer(
+                observer,
+                middleware,
+                observer_name=observer_name,
+                owner_label="router",
+            ):
+                registered = True
+
+    if not registered and dp is not None:
+        for observer_name in ("message", "callback_query"):
+            observer = getattr(dp, observer_name, None)
+            if observer is not None and _try_register_middleware_on_observer(
+                observer,
+                middleware,
+                observer_name=observer_name,
+                owner_label="dispatcher",
+            ):
+                registered = True
+
+    if not registered:
+        logger.warning(
+            "Health middleware was not registered: dispatcher type=%s, router type=%s "
+            "do not expose observer.middleware API",
+            type(dp).__name__ if dp is not None else "None",
+            type(router).__name__ if router is not None else "None",
+        )
 
 
 async def get_bot_runtime() -> BotRuntime:
@@ -129,8 +177,8 @@ async def get_bot_runtime() -> BotRuntime:
     elif dp is not None:
         logger.warning("obabot router is missing; warehouse handlers were not registered")
 
-    if dp is not None:
-        _register_health_middleware(dp)
+    if dp is not None or router is not None:
+        _register_health_middleware(dp, router)
 
     _runtime = BotRuntime(bot=bot, dp=dp, router=router)
     bot_health.mark_runtime_started(
