@@ -32,6 +32,9 @@ class BotHealthState:
     def record_successful_send(self) -> None:
         self.last_successful_send_at = _utc_now()
         self.last_error = None
+        from app.observability.prometheus_metrics import record_bot_answer
+
+        record_bot_answer()
 
     def record_error(self, error: BaseException | str) -> None:
         self.last_error = str(error)

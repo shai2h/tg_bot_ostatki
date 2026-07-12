@@ -13,6 +13,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
 from app.api.health import router as health_router
+from app.api.metrics import router as metrics_router
 from app.api.ostatki import router as ostatki_router
 from app.bot.health import bot_health
 from app.bot.main import get_bot_runtime
@@ -172,6 +173,7 @@ app = FastAPI(
 )
 app.add_middleware(MaxWebhookMiddleware)
 app.include_router(health_router)
+app.include_router(metrics_router)
 app.include_router(ostatki_router)
 
 
