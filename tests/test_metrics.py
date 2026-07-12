@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from app.api.metrics import router as metrics_router
 from app.bot.health import bot_health
 from app.observability.db_metrics_cache import invalidate_db_metrics_cache, set_db_metrics_cache
-from app.observability import prometheus_metrics as pm
+from app.observability.prometheus_metrics import DatabasePingCache, refresh_database_up_if_needed
 
 
 @pytest.fixture
@@ -34,7 +34,7 @@ async def test_metrics_endpoint_returns_prometheus_format(metrics_app: FastAPI) 
     bot_health.mark_runtime_started("polling", handlers_registered=True)
 
     with patch(
-        "app.observability.prometheus_metrics.refresh_db_metrics_if_needed",
+        "app.observability.prometheus_metrics.refresh_database_up_if_needed",
         new=AsyncMock(),
     ):
         transport = ASGITransport(app=metrics_app)
@@ -44,42 +44,38 @@ async def test_metrics_endpoint_returns_prometheus_format(metrics_app: FastAPI) 
     assert response.status_code == 200
     assert "text/plain" in response.headers["content-type"]
     body = response.text
-    assert "bot_up" in body
+    assert "# HELP bot_up" in body
+    assert "# TYPE bot_up gauge" in body
+    assert "bot_up 1.0" in body
+    assert "# HELP database_up" in body
+    assert "# TYPE database_up gauge" in body
     assert "database_up" in body
-    assert "user_queries_total" in body
-    assert "bot_answers_total" in body
 
 
 @pytest.mark.asyncio
-async def test_db_metrics_cache_skips_refetch_within_ttl() -> None:
-    set_db_metrics_cache(
-        pm.DbMetricsSnapshot(
-            database_up=1,
-            one_c_last_update_timestamp=1_700_000_000.0,
-            one_c_seconds_since_last_update=100.0,
-            warehouse_stock_rows=42,
-            fetched_at=time.monotonic(),
-        )
-    )
+async def test_database_up_cache_skips_ping_within_ttl() -> None:
+    set_db_metrics_cache(DatabasePingCache(database_up=1, fetched_at=time.monotonic()))
 
     with patch(
-        "app.observability.prometheus_metrics._fetch_db_snapshot",
+        "app.observability.prometheus_metrics._fetch_database_up",
         new=AsyncMock(),
     ) as fetch_mock:
-        await pm.refresh_db_metrics_if_needed()
-        await pm.refresh_db_metrics_if_needed()
+        await refresh_database_up_if_needed()
+        await refresh_database_up_if_needed()
 
     fetch_mock.assert_not_called()
-    assert pm.warehouse_stock_rows._value.get() == 42.0
 
 
-def test_record_user_query_increments_counter() -> None:
-    before = pm.user_queries_total._value.get()
-    pm.record_user_query()
-    assert pm.user_queries_total._value.get() == before + 1
+def test_bot_up_uses_runtime_running_only() -> None:
+    import asyncio
 
+    from app.observability.prometheus_metrics import _apply_bot_up, bot_up
 
-def test_record_bot_answer_increments_counter() -> None:
-    before = pm.bot_answers_total._value.get()
-    pm.record_bot_answer()
-    assert pm.bot_answers_total._value.get() == before + 1
+    bot_health.runtime_running = True
+    bot_health.handlers_registered = False
+    _apply_bot_up()
+    assert bot_up._value.get() == 1.0
+
+    bot_health.runtime_running = False
+    _apply_bot_up()
+    assert bot_up._value.get() == 0.0

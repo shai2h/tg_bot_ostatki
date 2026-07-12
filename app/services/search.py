@@ -43,9 +43,6 @@ async def fuzzy_find_products(query: str, limit: int = 10) -> list:
 
 
 async def log_user_query(user_id: int, query: str):
-    from app.observability.prometheus_metrics import record_user_query
-
-    record_user_query()
     async with async_session_maker() as session:
         await session.execute(
             insert(UserQueryLog).values(
@@ -173,9 +170,6 @@ async def get_stocks_by_kod(kod: str, sklad: str):
 
 
 async def log_user_query(user_id: int, query: str):
-    from app.observability.prometheus_metrics import record_user_query
-
-    record_user_query()
     async with async_session_maker() as session:
         await session.execute(
             insert(UserQueryLog).values(

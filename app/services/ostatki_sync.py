@@ -10,7 +10,6 @@ from sqlalchemy import delete, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.observability.db_metrics_cache import invalidate_db_metrics_cache
 from app.warehouse_stock.models import OstatkiMeta, WarehouseStocks
 
 logger = logging.getLogger(__name__)
@@ -60,5 +59,4 @@ async def replace_ostatki_snapshot(
         len(final_data),
         duration_ms,
     )
-    invalidate_db_metrics_cache()
     return now, len(final_data)
