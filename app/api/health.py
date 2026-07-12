@@ -11,7 +11,7 @@ from starlette.responses import JSONResponse
 from app.bot.health import bot_health
 from app.config import settings
 from app.db.database import async_session_maker
-from app.services.ostatki_sync import count_warehouse_stock_rows, ping_database
+from app.db.health import count_warehouse_stock_rows, ping_database
 from app.warehouse_stock.models import OstatkiMeta
 
 router = APIRouter(tags=["health"])

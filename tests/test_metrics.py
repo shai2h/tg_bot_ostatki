@@ -9,6 +9,7 @@ from fastapi import FastAPI
 
 from app.api.metrics import router as metrics_router
 from app.bot.health import bot_health
+from app.observability.db_metrics_cache import invalidate_db_metrics_cache, set_db_metrics_cache
 from app.observability import prometheus_metrics as pm
 
 
@@ -23,9 +24,9 @@ def metrics_app() -> FastAPI:
 def reset_metrics_state() -> None:
     bot_health.runtime_running = False
     bot_health.handlers_registered = False
-    pm.invalidate_db_metrics_cache()
+    invalidate_db_metrics_cache()
     yield
-    pm.invalidate_db_metrics_cache()
+    invalidate_db_metrics_cache()
 
 
 @pytest.mark.asyncio
@@ -51,12 +52,14 @@ async def test_metrics_endpoint_returns_prometheus_format(metrics_app: FastAPI) 
 
 @pytest.mark.asyncio
 async def test_db_metrics_cache_skips_refetch_within_ttl() -> None:
-    pm._db_cache = pm.DbMetricsSnapshot(
-        database_up=1,
-        one_c_last_update_timestamp=1_700_000_000.0,
-        one_c_seconds_since_last_update=100.0,
-        warehouse_stock_rows=42,
-        fetched_at=time.monotonic(),
+    set_db_metrics_cache(
+        pm.DbMetricsSnapshot(
+            database_up=1,
+            one_c_last_update_timestamp=1_700_000_000.0,
+            one_c_seconds_since_last_update=100.0,
+            warehouse_stock_rows=42,
+            fetched_at=time.monotonic(),
+        )
     )
 
     with patch(

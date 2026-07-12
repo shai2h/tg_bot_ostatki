@@ -25,10 +25,28 @@ from sqlalchemy import select
 from app.bot.health import bot_health
 from app.config import settings
 from app.db.database import async_session_maker
-from app.services.ostatki_sync import count_warehouse_stock_rows, ping_database
+from app.db.health import count_warehouse_stock_rows, ping_database
+from app.observability.db_metrics_cache import (
+    get_db_metrics_cache,
+    invalidate_db_metrics_cache,
+    set_db_metrics_cache,
+)
 from app.warehouse_stock.models import OstatkiMeta
 
 logger = logging.getLogger(__name__)
+
+# Re-exported for callers that already import invalidate from this module.
+__all__ = [
+    "bot_up",
+    "bot_answers_total",
+    "collect_metrics_for_scrape",
+    "export_prometheus_metrics",
+    "invalidate_db_metrics_cache",
+    "record_bot_answer",
+    "record_user_query",
+    "refresh_db_metrics_if_needed",
+    "user_queries_total",
+]
 
 # ---------------------------------------------------------------------------
 # Metric definitions (extend here: histograms, labels per platform, etc.)
@@ -84,7 +102,6 @@ class DbMetricsSnapshot:
     fetched_at: float
 
 
-_db_cache: DbMetricsSnapshot | None = None
 _db_cache_lock = asyncio.Lock()
 
 
@@ -94,12 +111,6 @@ def record_user_query() -> None:
 
 def record_bot_answer() -> None:
     bot_answers_total.inc()
-
-
-def invalidate_db_metrics_cache() -> None:
-    """Call after 1C snapshot sync so the next scrape sees fresh DB gauges."""
-    global _db_cache
-    _db_cache = None
 
 
 def _apply_bot_gauges() -> None:
@@ -149,35 +160,35 @@ async def _fetch_db_snapshot() -> DbMetricsSnapshot:
 
 
 async def refresh_db_metrics_if_needed() -> None:
-    global _db_cache
-
     ttl = settings.METRICS_DB_CACHE_TTL_SECONDS
     now = time.monotonic()
-    if _db_cache is not None and (now - _db_cache.fetched_at) < ttl:
-        _apply_db_snapshot(_db_cache)
+    cached = get_db_metrics_cache()
+    if cached is not None and (now - cached.fetched_at) < ttl:
+        _apply_db_snapshot(cached)
         return
 
     async with _db_cache_lock:
         now = time.monotonic()
-        if _db_cache is not None and (now - _db_cache.fetched_at) < ttl:
-            _apply_db_snapshot(_db_cache)
+        cached = get_db_metrics_cache()
+        if cached is not None and (now - cached.fetched_at) < ttl:
+            _apply_db_snapshot(cached)
             return
 
         try:
-            _db_cache = await _fetch_db_snapshot()
+            snapshot = await _fetch_db_snapshot()
         except Exception:
             logger.exception("Failed to refresh Prometheus DB metrics cache")
-            if _db_cache is not None:
-                stale = DbMetricsSnapshot(
+            cached = get_db_metrics_cache()
+            if cached is not None:
+                snapshot = DbMetricsSnapshot(
                     database_up=0,
-                    one_c_last_update_timestamp=_db_cache.one_c_last_update_timestamp,
-                    one_c_seconds_since_last_update=_db_cache.one_c_seconds_since_last_update,
-                    warehouse_stock_rows=_db_cache.warehouse_stock_rows,
+                    one_c_last_update_timestamp=cached.one_c_last_update_timestamp,
+                    one_c_seconds_since_last_update=cached.one_c_seconds_since_last_update,
+                    warehouse_stock_rows=cached.warehouse_stock_rows,
                     fetched_at=time.monotonic(),
                 )
-                _db_cache = stale
             else:
-                _db_cache = DbMetricsSnapshot(
+                snapshot = DbMetricsSnapshot(
                     database_up=0,
                     one_c_last_update_timestamp=0.0,
                     one_c_seconds_since_last_update=-1.0,
@@ -185,7 +196,8 @@ async def refresh_db_metrics_if_needed() -> None:
                     fetched_at=time.monotonic(),
                 )
 
-        _apply_db_snapshot(_db_cache)
+        set_db_metrics_cache(snapshot)
+        _apply_db_snapshot(snapshot)
 
 
 async def collect_metrics_for_scrape() -> None:
