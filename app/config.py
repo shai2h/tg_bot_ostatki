@@ -31,6 +31,7 @@ class Settings(BaseSettings):
 
     ONE_C_STALE_AFTER_SECONDS: int = 300
     LOG_LEVEL: str = "INFO"
+    METRICS_DB_CACHE_TTL_SECONDS: int = 30
 
     model_config = SettingsConfigDict(
         env_file=".env",
