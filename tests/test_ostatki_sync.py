@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from datetime import datetime
-from unittest.mock import AsyncMock, call
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import delete, insert
@@ -51,11 +51,15 @@ async def test_replace_snapshot_uses_single_transaction() -> None:
     session.execute = AsyncMock()
 
     data = [_sample_row(), _sample_row(kod="K2")]
-    updated_at, unique_rows = await replace_ostatki_snapshot(session, data)
+    with patch(
+        "app.services.ostatki_sync.invalidate_db_metrics_cache"
+    ) as invalidate_cache_mock:
+        updated_at, unique_rows = await replace_ostatki_snapshot(session, data)
 
     assert isinstance(updated_at, datetime)
     assert unique_rows == 2
     assert session.execute.await_count == 3
+    invalidate_cache_mock.assert_called_once_with()
 
     delete_stmt = session.execute.await_args_list[0].args[0]
     insert_stmt = session.execute.await_args_list[1].args[0]
@@ -89,10 +93,14 @@ async def test_replace_snapshot_rollback_on_insert_error() -> None:
 
     session.execute = AsyncMock(side_effect=execute_side_effect)
 
-    with pytest.raises(RuntimeError, match="insert failed"):
-        await replace_ostatki_snapshot(session, [_sample_row()])
+    with patch(
+        "app.services.ostatki_sync.invalidate_db_metrics_cache"
+    ) as invalidate_cache_mock:
+        with pytest.raises(RuntimeError, match="insert failed"):
+            await replace_ostatki_snapshot(session, [_sample_row()])
 
     assert rolled_back is True
+    invalidate_cache_mock.assert_not_called()
 
 
 @pytest.mark.asyncio
