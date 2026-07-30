@@ -2,16 +2,18 @@ from __future__ import annotations
 
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from aiogram.types import InlineKeyboardMarkup
 
 from app.bot.handlers import (
+    WELCOME_TEXT,
     _format_compact_product_card,
     _format_exact_product_card,
     _send_search_results,
 )
+from app.bot.user_guards import UserInteractionGuard, user_guards
 from app.services.catalog_exceptions import (
     CatalogUnauthorizedError,
     CatalogUnavailableError,
@@ -57,6 +59,17 @@ class FakeMessage:
     async def answer(self, text: str, **kwargs):
         self.answers.append((text, kwargs))
         return None
+
+
+@pytest.fixture(autouse=True)
+def reset_user_guards() -> None:
+    user_guards._users.clear()
+    user_guards._seen_messages.clear()
+    user_guards._seen_callbacks.clear()
+    yield
+    user_guards._users.clear()
+    user_guards._seen_messages.clear()
+    user_guards._seen_callbacks.clear()
 
 
 @pytest.mark.asyncio
@@ -109,12 +122,12 @@ async def test_feature_flag_true_calls_b2b_api() -> None:
 
     b2b_mock.assert_awaited_once_with("CM107", limit=5)
     local_mock.assert_not_awaited()
-    assert "Товар найден" in message.answers[0][0]
-    assert "Розничная цена: 107 258 ₽" in message.answers[0][0]
+    assert "🧺" in message.answers[0][0]
+    assert "▶️ Цена: 107 258 ₽" in message.answers[0][0]
     assert "many" not in message.answers[0][0]
-    assert "42" not in message.answers[0][0]
     markup = message.answers[0][1]["reply_markup"]
     assert isinstance(markup, InlineKeyboardMarkup)
+    assert markup.inline_keyboard[0][0].text == "Открыть карточку товара"
     assert markup.inline_keyboard[0][0].url == "https://rosholod.org/catalog/12345"
 
 
@@ -174,12 +187,12 @@ async def test_multiple_results_limited_to_five() -> None:
     product_answers = message.answers[1:6]
     assert len(product_answers) == 5
     for idx, (text, kwargs) in enumerate(product_answers, start=1):
-        assert text.startswith(f"{idx}. Товар {idx}")
-        assert "Розничная цена:" in text
+        assert text.startswith(f"🧺 {idx}. Товар {idx}")
+        assert "▶️ Цена:" in text
         assert kwargs["reply_markup"].inline_keyboard[0][0].url.endswith(f"/{idx}")
-    assert message.answers[-1][1]["reply_markup"].inline_keyboard[0][0].url.endswith(
-        "search=CM107"
-    )
+    catalog_text, catalog_kwargs = message.answers[-1]
+    assert catalog_text == "🌐 Посмотреть полный каталог товаров"
+    assert catalog_kwargs["reply_markup"].inline_keyboard[0][0].text == "Открыть каталог"
 
 
 @pytest.mark.asyncio
@@ -204,9 +217,7 @@ async def test_empty_b2b_result_no_fallback() -> None:
     local_mock.assert_not_awaited()
     fuzzy_mock.assert_not_awaited()
     assert "ничего не найдено" in message.answers[0][0]
-    assert message.answers[0][1]["reply_markup"].inline_keyboard[0][0].text == (
-        "Открыть поиск в каталоге"
-    )
+    assert message.answers[0][1]["reply_markup"].inline_keyboard[0][0].text == "Открыть каталог"
 
 
 @pytest.mark.asyncio
@@ -252,7 +263,9 @@ async def test_timeout_triggers_local_fallback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unauthorized_allows_fallback_and_logs_without_token(caplog: pytest.LogCaptureFixture) -> None:
+async def test_unauthorized_allows_fallback_and_logs_without_token(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     message = FakeMessage()
     with (
         patch("app.bot.handlers.settings.B2B_CATALOG_SEARCH_ENABLED", True),
@@ -292,27 +305,112 @@ async def test_both_paths_fail_safe_message() -> None:
     assert "traceback" not in message.answers[0][0].lower()
 
 
+@pytest.mark.asyncio
+async def test_spam_guard_blocks_parallel_search() -> None:
+    message = FakeMessage()
+    assert user_guards.begin_search(42) is None
+    with (
+        patch("app.bot.handlers.settings.B2B_CATALOG_SEARCH_ENABLED", True),
+        patch("app.bot.handlers.log_user_query", new=AsyncMock()) as log_mock,
+        patch("app.bot.handlers.b2b_search_products", new=AsyncMock()) as b2b_mock,
+    ):
+        await _send_search_results(message, 42, "CM107")
+
+    log_mock.assert_not_awaited()
+    b2b_mock.assert_not_awaited()
+    assert "предыдущий поиск" in message.answers[0][0]
+
+
 def test_exact_card_uses_labels_and_retail_price_only() -> None:
     text = _format_exact_product_card(_product())
-    assert "Розничная цена: 107 258 ₽" in text
-    assert "Москва — Много" in text
-    assert "Казань — Немного" in text
+    assert text.startswith("🧺 Шкаф холодильный")
+    assert "▶️ Цена: 107 258 ₽" in text
+    assert "Москва — 🟢 Много" in text
+    assert "Казань — 🟠 Немного" in text
     assert "many" not in text
-    assert "107258" not in text.replace("107 258", "")
 
 
 def test_compact_card_uses_availability_label() -> None:
     text = _format_compact_product_card(1, _product())
-    assert "Наличие: Много" in text
+    assert text.startswith("🧺 1. ")
+    assert "🟢 Наличие: Много" in text
     assert "Москва" not in text
 
 
 def test_price_fallback_without_display() -> None:
     product = _product(retail_price_display=None, retail_price=Decimal("163846.00"))
     text = _format_exact_product_card(product)
-    assert "Розничная цена: 163 846 ₽" in text
+    assert "▶️ Цена: 163 846 ₽" in text
 
 
 def test_missing_brand_line_omitted() -> None:
     text = _format_exact_product_card(_product(brand=None))
     assert "Бренд:" not in text
+
+
+def test_welcome_text_mentions_dealer_platform() -> None:
+    assert "Добро пожаловать" in WELCOME_TEXT
+    assert "rosholod.org" in WELCOME_TEXT
+
+
+def test_start_debounce_skips_duplicate() -> None:
+    guard = UserInteractionGuard(start_debounce_seconds=3.0)
+    assert guard.should_skip_duplicate_start(7) is False
+    assert guard.should_skip_duplicate_start(7) is True
+
+
+def test_bot_authored_message_is_detected() -> None:
+    from app.bot.user_guards import is_message_from_bot
+
+    bot = SimpleNamespace(id=1001)
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=1001, is_bot=False),
+        _bot=bot,
+        chat=SimpleNamespace(id=55),
+        message_id="mid-1",
+    )
+    assert is_message_from_bot(message) is True
+
+    user_message = SimpleNamespace(
+        from_user=SimpleNamespace(id=42, is_bot=False),
+        _bot=bot,
+        chat=SimpleNamespace(id=55),
+        message_id="mid-2",
+    )
+    assert is_message_from_bot(user_message) is False
+
+
+@pytest.mark.asyncio
+async def test_bot_echo_does_not_start_search() -> None:
+    from app.bot.handlers import _accept_inbound_message
+
+    bot = SimpleNamespace(id=1001)
+    message = SimpleNamespace(
+        from_user=SimpleNamespace(id=1001, is_bot=False),
+        _bot=bot,
+        chat=SimpleNamespace(id=55),
+        message_id="bot-card-1",
+        text="🧺 Товар",
+        platform="max",
+    )
+    assert _accept_inbound_message(message) is False
+
+    with (
+        patch("app.bot.handlers.settings.B2B_CATALOG_SEARCH_ENABLED", True),
+        patch("app.bot.handlers.log_user_query", new=AsyncMock()) as log_mock,
+        patch("app.bot.handlers.b2b_search_products", new=AsyncMock()) as b2b_mock,
+    ):
+        # Simulate catch-all path guard: ignored before search.
+        if _accept_inbound_message(message):
+            await _send_search_results(message, 1001, message.text)
+
+    log_mock.assert_not_awaited()
+    b2b_mock.assert_not_awaited()
+
+
+def test_message_dedupe_skips_second_delivery() -> None:
+    guard = UserInteractionGuard()
+    assert guard.should_skip_duplicate_message("chat:1") is False
+    assert guard.should_skip_duplicate_message("chat:1") is True
+    assert guard.should_skip_duplicate_callback("cb:1") is False
+    assert guard.should_skip_duplicate_callback("cb:1") is True

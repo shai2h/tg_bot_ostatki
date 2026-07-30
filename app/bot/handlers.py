@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -22,6 +23,12 @@ from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
 from sqlalchemy import select
 
+from app.bot.user_guards import (
+    inbound_callback_key,
+    inbound_message_key,
+    is_message_from_bot,
+    user_guards,
+)
 from app.bot.utils import format_stock_quantity
 from app.config import settings
 from app.db.database import async_session_maker
@@ -56,6 +63,40 @@ PRICE_LIST_TEXT = (
     f"\u0441\u0441\u044b\u043b\u043a\u0435:\n{PRICE_LIST_URL}"
 )
 PRICE_LIST_BUTTON_TEXT = "\u0421\u043a\u0430\u0447\u0430\u0442\u044c \u043f\u0440\u0430\u0439\u0441"
+DEALER_PLATFORM_URL = "https://rosholod.org"
+CARD_SEPARATOR = "━━━━━━━━━━━━━━━━━━"
+
+WELCOME_TEXT = (
+    "👋 Добро пожаловать!\n\n"
+    "Здесь вы можете быстро узнать наличие товаров на складах Росхолода.\n\n"
+    "🔎 Отправьте название товара, артикул или код товара — "
+    "и я покажу актуальную информацию о наличии.\n\n"
+    "🌐 Работайте быстрее через дилерскую платформу Росхолод.\n\n"
+    "На платформе вы можете:\n"
+    "• оформлять заказы онлайн;\n"
+    "• проверять актуальные цены и остатки;\n"
+    "• просматривать документы и историю заказов.\n\n"
+    "👉 Для регистрации обратитесь к вашему персональному менеджеру.\n\n"
+    f"🔗 {DEALER_PLATFORM_URL}"
+)
+
+DEALER_PROMO_TEXT = (
+    f"{CARD_SEPARATOR}\n\n"
+    "🌐 Пользуетесь ботом регулярно?\n\n"
+    "Попробуйте дилерскую платформу Росхолод.\n\n"
+    "✔️ Оформление заказов онлайн\n"
+    "✔️ Актуальные остатки и цены\n"
+    "✔️ Документы и история заказов\n\n"
+    "👉 Для подключения обратитесь к вашему персональному менеджеру.\n\n"
+    f"🔗 {DEALER_PLATFORM_URL}"
+)
+
+_AVAILABILITY_EMOJI = (
+    ("немного", "🟠"),
+    ("в наличии", "🟡"),
+    ("много", "🟢"),
+    ("нет", "🔴"),
+)
 
 
 def _price_list_keyboard() -> InlineKeyboardMarkup:
@@ -81,10 +122,23 @@ def _normalize_query(query: str) -> str:
     return " ".join(query.strip().split())
 
 
-def _format_retail_price_line(product: CatalogProduct) -> str | None:
+def _availability_emoji(label: str | None, status: str | None = None) -> str:
+    needle = f"{label or ''} {status or ''}".casefold()
+    for token, emoji in _AVAILABILITY_EMOJI:
+        if token in needle:
+            return emoji
+    return "⚪"
+
+
+def _format_availability_label(label: str | None, status: str | None = None) -> str:
+    text = (label or "").strip() or "Наличие уточняется"
+    return f"{_availability_emoji(text, status)} {text}"
+
+
+def _format_retail_price_value(product: CatalogProduct) -> str | None:
     display = (product.retail_price_display or "").strip()
     if display:
-        return f"Розничная цена: {display}"
+        return display
 
     if product.retail_price is None:
         return None
@@ -103,7 +157,7 @@ def _format_retail_price_line(product: CatalogProduct) -> str | None:
         formatted = f"{grouped},{fraction.rstrip('0')}"
     else:
         formatted = grouped
-    return f"Розничная цена: {sign}{formatted} ₽"
+    return f"{sign}{formatted} ₽"
 
 
 def _append_optional_field(lines: list[str], label: str, value: str | None) -> None:
@@ -112,55 +166,59 @@ def _append_optional_field(lines: list[str], label: str, value: str | None) -> N
     text = str(value).strip()
     if not text:
         return
-    lines.append(f"{label}: {text}")
+    lines.append(f"▶️ {label}: {text}")
 
 
 def _format_exact_product_card(product: CatalogProduct) -> str:
-    lines = ["✅ Товар найден", "", product.title]
+    lines = [f"🧺 {product.title}", "", CARD_SEPARATOR, ""]
     _append_optional_field(lines, "Код", product.code)
     _append_optional_field(lines, "Артикул", product.article)
     _append_optional_field(lines, "Бренд", product.brand)
     _append_optional_field(lines, "Категория", product.category)
-    price_line = _format_retail_price_line(product)
-    if price_line:
-        lines.append(price_line)
+    price = _format_retail_price_value(product)
+    if price:
+        lines.append(f"▶️ Цена: {price}")
 
     lines.append("")
-    lines.append("Наличие:")
     if product.warehouses:
+        lines.append("Наличие:")
         for warehouse in product.warehouses:
             label = (warehouse.label or "").strip()
             name = (warehouse.name or "").strip()
-            if name and label:
-                lines.append(f"• {name} — {label}")
-            elif name:
-                lines.append(f"• {name}")
-            elif label:
-                lines.append(f"• {label}")
+            status_text = _format_availability_label(label or None, warehouse.status)
+            if name:
+                lines.append(f"• {name} — {status_text}")
+            else:
+                lines.append(f"• {status_text}")
     else:
-        label = (product.availability.label if product.availability else None) or ""
-        label = label.strip()
-        if label:
-            lines.append(f"• {label}")
+        label = product.availability.label if product.availability else None
+        status = product.availability.status if product.availability else None
+        if (label or "").strip():
+            lines.append(
+                f"{_availability_emoji(label, status)} Наличие: {label.strip()}"
+            )
+        else:
+            lines.append("⚪ Наличие: Наличие уточняется")
 
     return "\n".join(lines).strip()
 
 
 def _format_compact_product_card(index: int, product: CatalogProduct) -> str:
-    lines = [f"{index}. {product.title}", ""]
+    lines = [f"🧺 {index}. {product.title}", "", CARD_SEPARATOR, ""]
     _append_optional_field(lines, "Код", product.code)
     _append_optional_field(lines, "Артикул", product.article)
     _append_optional_field(lines, "Бренд", product.brand)
     _append_optional_field(lines, "Категория", product.category)
-    price_line = _format_retail_price_line(product)
-    if price_line:
-        lines.append(price_line)
+    price = _format_retail_price_value(product)
+    if price:
+        lines.append(f"▶️ Цена: {price}")
 
-    availability_label = ""
-    if product.availability and product.availability.label:
-        availability_label = product.availability.label.strip()
-    if availability_label:
-        lines.append(f"Наличие: {availability_label}")
+    label = product.availability.label if product.availability else None
+    status = product.availability.status if product.availability else None
+    if (label or "").strip():
+        lines.append(f"{_availability_emoji(label, status)} Наличие: {label.strip()}")
+    else:
+        lines.append("⚪ Наличие: Наличие уточняется")
 
     return "\n".join(lines).strip()
 
@@ -216,6 +274,7 @@ def _main_menu_inline_keyboard() -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text="Инструкция", callback_data="menu:instruction")],
             [InlineKeyboardButton(text=PRICE_LIST_BUTTON_TEXT, url=PRICE_LIST_URL)],
             [InlineKeyboardButton(text="История запросов", callback_data="menu:history")],
+            [InlineKeyboardButton(text="Открыть платформу", url=DEALER_PLATFORM_URL)],
         ]
     )
 
@@ -231,98 +290,95 @@ async def _get_last_updated_label() -> str:
     return updated_at.astimezone(ZoneInfo("Europe/Moscow")).strftime("%d.%m.%Y %H:%M:%S")
 
 
+async def _maybe_send_dealer_promo(message: Message, user_id: int, *, success: bool) -> None:
+    if not user_guards.end_search(user_id, success=success):
+        return
+    await _answer(message, DEALER_PROMO_TEXT)
+
+
+async def _run_search_with_thinking(message: Message, awaitable):
+    task = asyncio.create_task(awaitable)
+    try:
+        try:
+            return await asyncio.wait_for(asyncio.shield(task), timeout=1.0)
+        except asyncio.TimeoutError:
+            try:
+                await _answer(message, "🔎 Ищу товар...")
+            except Exception:
+                logger.debug("Failed to send search thinking indicator", exc_info=True)
+            return await task
+    except BaseException:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+        raise
+
+
+def _accept_inbound_message(message: Message) -> bool:
+    """Drop bot echoes and duplicated message_created updates before any handler logic."""
+    if is_message_from_bot(message):
+        logger.info(
+            "Ignoring bot-authored inbound message message_key=%s",
+            inbound_message_key(message),
+        )
+        return False
+    message_key = inbound_message_key(message)
+    if user_guards.should_skip_duplicate_message(message_key):
+        logger.info("Ignoring duplicated inbound message message_key=%s", message_key)
+        return False
+    return True
+
+
+async def _accept_inbound_callback(callback: CallbackQuery) -> bool:
+    callback_key = inbound_callback_key(callback)
+    if user_guards.should_skip_duplicate_callback(callback_key):
+        logger.info("Ignoring duplicated callback callback_key=%s", callback_key)
+        try:
+            await callback.answer()
+        except Exception:
+            logger.debug("callback.answer on duplicate failed", exc_info=True)
+        return False
+    return True
+
+
 def register_handlers(router) -> None:
     @router.message(Command("start"))
     async def handle_start(message: Message) -> None:
+        if not _accept_inbound_message(message):
+            return
+        user_id = message.from_user.id
+        # Root cause of duplicates: MAX may deliver /start more than once, and the
+        # catch-all F.text handler previously also accepted command texts.
+        if user_guards.should_skip_duplicate_start(user_id):
+            logger.info("Skipping duplicate /start user_id=%s", user_id)
+            return
+
         await _answer(
             message,
-            "<b>Добро пожаловать в бот остатков!</b>\n\n"
-            "Введите название товара или артикул, и я покажу актуальные остатки по складам.\n\n"
-            "Команды в меню:\n"
-            "• <b>Инструкция</b>\n"
-            f"• <b>{PRICE_LIST_BUTTON_TEXT}</b>\n"
-            "• <b>История запросов</b>",
+            WELCOME_TEXT,
             reply_markup=_main_menu_inline_keyboard() if _is_max_event(message) else _main_menu_keyboard(),
         )
 
     @router.message(F.text.casefold() == "инструкция")
     async def handle_instruction(message: Message) -> None:
+        if not _accept_inbound_message(message):
+            return
         await _send_instruction(message)
 
     @router.message(F.text.casefold() == "полный отчет xlsx")
     @router.message(F.text.casefold() == "\u0441\u043a\u0430\u0447\u0430\u0442\u044c \u043f\u0440\u0430\u0439\u0441")
     async def handle_full_report(message: Message) -> None:
-        await _answer(message, PRICE_LIST_TEXT, reply_markup=_price_list_keyboard())
-        return
-
-        # Legacy XLSX generation is intentionally kept below for possible reuse.
-        # It is disabled because the current flow sends a static price-list link.
-        async with async_session_maker() as session:
-            result = await session.execute(WarehouseStocks.__table__.select())
-            rows = result.fetchall()
-
-        if not rows:
-            await _answer(message, "Нет данных для отчета.")
+        if not _accept_inbound_message(message):
             return
-
-        all_cities = sorted({row.sklad for row in rows})
-        grouped: dict[tuple, dict[str, str]] = {}
-
-        for row in rows:
-            key = (row.vid, row.name, row.price, row.brend, row.kod, row.articul)
-            grouped.setdefault(key, {city: "" for city in all_cities})
-            grouped[key][row.sklad] = format_stock_quantity(row.ostatok)
-
-        data = []
-        for key, city_stocks in grouped.items():
-            row_data = {
-                "Вид номенклатуры": key[0],
-                "Наименование": key[1],
-                "Розничная цена (₽)": key[2],
-                "Бренд": key[3],
-                "Код": key[4],
-                "Артикул": key[5],
-            }
-            row_data.update(city_stocks)
-            data.append(row_data)
-
-        latest_date = await _get_last_updated_label()
-        safe_date = latest_date.replace(":", "-").replace(" ", "_")
-        file_path = f"report_{safe_date}.xlsx"
-
-        try:
-            pd.DataFrame(data).to_excel(file_path, index=False)
-
-            wb = load_workbook(file_path)
-            ws = wb.active
-            ws["A1"] = f"Актуальность остатков: {latest_date}"
-            fill = PatternFill(start_color="FFFACD", end_color="FFFACD", fill_type="solid")
-
-            for col in ws.iter_cols(min_row=1, max_row=1):
-                header = col[0].value
-                col_letter = col[0].column_letter
-                if header in ["Вид номенклатуры", "Наименование", "Бренд"]:
-                    ws.column_dimensions[col_letter].width = 40
-                elif header in ["Код", "Артикул"]:
-                    ws.column_dimensions[col_letter].width = 20
-                elif str(header).startswith("Розничная"):
-                    ws.column_dimensions[col_letter].width = 18
-                else:
-                    ws.column_dimensions[col_letter].width = 15
-                    col[0].fill = fill
-
-            wb.save(file_path)
-            await _answer_document(
-                message,
-                FSInputFile(file_path),
-                caption="Полный отчет по складам",
-            )
-        finally:
-            if os.path.exists(file_path):
-                os.remove(file_path)
+        await _send_price_list(message)
 
     @router.message(F.text.casefold() == "история запросов")
     async def handle_history_request(message: Message) -> None:
+        if not _accept_inbound_message(message):
+            return
         user_id = message.from_user.id
         history = await get_user_query_history(user_id)
         if not history:
@@ -339,17 +395,23 @@ def register_handlers(router) -> None:
 
     @router.callback_query(F.data.startswith("history:"))
     async def handle_history_callback(callback: CallbackQuery) -> None:
+        if not await _accept_inbound_callback(callback):
+            return
         query = callback.data.replace("history:", "", 1)
-        await callback.answer("Ищу...")
+        await callback.answer()
         await _send_search_results(callback.message, callback.from_user.id, query)
 
     @router.callback_query(F.data == "menu:instruction")
     async def handle_menu_instruction(callback: CallbackQuery) -> None:
+        if not await _accept_inbound_callback(callback):
+            return
         await callback.answer()
         await _send_instruction(callback.message, reply_markup=_main_menu_inline_keyboard())
 
     @router.callback_query(F.data == "menu:history")
     async def handle_menu_history(callback: CallbackQuery) -> None:
+        if not await _accept_inbound_callback(callback):
+            return
         await callback.answer()
         history = await get_user_query_history(callback.from_user.id)
         if not history:
@@ -366,63 +428,163 @@ def register_handlers(router) -> None:
 
     @router.callback_query(F.data == "menu:report")
     async def handle_menu_report(callback: CallbackQuery) -> None:
+        if not await _accept_inbound_callback(callback):
+            return
         await callback.answer()
-        await handle_full_report(callback.message)
+        await _send_price_list(callback.message)
 
     @router.message(F.text)
     async def handle_user_query(message: Message) -> None:
-        await _send_search_results(message, message.from_user.id, message.text.strip())
+        if not _accept_inbound_message(message):
+            return
+        text = (message.text or "").strip()
+        # Prevent command texts (/start and others) from entering search flow.
+        if text.startswith("/"):
+            return
+        await _send_search_results(message, message.from_user.id, text)
+
+
+async def _send_price_list(message: Message) -> None:
+    await _answer(message, PRICE_LIST_TEXT, reply_markup=_price_list_keyboard())
+    return
+
+    # Legacy XLSX generation is intentionally kept below for possible reuse.
+    # It is disabled because the current flow sends a static price-list link.
+    async with async_session_maker() as session:
+        result = await session.execute(WarehouseStocks.__table__.select())
+        rows = result.fetchall()
+
+    if not rows:
+        await _answer(message, "Нет данных для отчета.")
+        return
+
+    all_cities = sorted({row.sklad for row in rows})
+    grouped: dict[tuple, dict[str, str]] = {}
+
+    for row in rows:
+        key = (row.vid, row.name, row.price, row.brend, row.kod, row.articul)
+        grouped.setdefault(key, {city: "" for city in all_cities})
+        grouped[key][row.sklad] = format_stock_quantity(row.ostatok)
+
+    data = []
+    for key, city_stocks in grouped.items():
+        row_data = {
+            "Вид номенклатуры": key[0],
+            "Наименование": key[1],
+            "Розничная цена (₽)": key[2],
+            "Бренд": key[3],
+            "Код": key[4],
+            "Артикул": key[5],
+        }
+        row_data.update(city_stocks)
+        data.append(row_data)
+
+    latest_date = await _get_last_updated_label()
+    safe_date = latest_date.replace(":", "-").replace(" ", "_")
+    file_path = f"report_{safe_date}.xlsx"
+
+    try:
+        pd.DataFrame(data).to_excel(file_path, index=False)
+
+        wb = load_workbook(file_path)
+        ws = wb.active
+        ws["A1"] = f"Актуальность остатков: {latest_date}"
+        fill = PatternFill(start_color="FFFACD", end_color="FFFACD", fill_type="solid")
+
+        for col in ws.iter_cols(min_row=1, max_row=1):
+            header = col[0].value
+            col_letter = col[0].column_letter
+            if header in ["Вид номенклатуры", "Наименование", "Бренд"]:
+                ws.column_dimensions[col_letter].width = 40
+            elif header in ["Код", "Артикул"]:
+                ws.column_dimensions[col_letter].width = 20
+            elif str(header).startswith("Розничная"):
+                ws.column_dimensions[col_letter].width = 18
+            else:
+                ws.column_dimensions[col_letter].width = 15
+                col[0].fill = fill
+
+        wb.save(file_path)
+        await _answer_document(
+            message,
+            FSInputFile(file_path),
+            caption="Полный отчет по складам",
+        )
+    finally:
+        if os.path.exists(file_path):
+            os.remove(file_path)
 
 
 async def _send_search_results(message: Message, user_id: int, query: str) -> None:
-    await log_user_query(user_id, query)
-    normalized_query = _normalize_query(query)
+    block_reason = user_guards.begin_search(user_id)
+    if block_reason:
+        await _answer(message, block_reason)
+        return
 
-    if settings.B2B_CATALOG_SEARCH_ENABLED:
-        try:
-            response = await b2b_search_products(normalized_query, limit=5)
-            await _send_b2b_search_results(message, normalized_query, response)
-            return
-        except CatalogValidationError:
-            await _answer(
-                message,
-                "Введите не менее 3 символов: название, код или артикул товара.",
-            )
-            return
-        except (
-            CatalogConfigurationError,
-            CatalogUnauthorizedError,
-            CatalogRateLimitError,
-            CatalogUnavailableError,
-            CatalogResponseError,
-            CatalogClientError,
-        ) as exc:
-            _record_b2b_fallback()
-            logger.warning(
-                "B2B search fallback to local search_source=local_fallback "
-                "query_length=%s error_type=%s",
-                len(normalized_query),
-                type(exc).__name__,
-            )
+    success = False
+    try:
+        await log_user_query(user_id, query)
+        normalized_query = _normalize_query(query)
+
+        if settings.B2B_CATALOG_SEARCH_ENABLED:
             try:
-                await _send_local_search_results(
+                response = await _run_search_with_thinking(
                     message,
-                    query,
-                    search_source="local_fallback",
+                    b2b_search_products(normalized_query, limit=5),
                 )
-            except Exception:
-                logger.exception(
-                    "Local search fallback failed search_source=local_fallback "
-                    "query_length=%s",
-                    len(normalized_query),
-                )
+                await _send_b2b_search_results(message, normalized_query, response)
+                success = True
+                return
+            except CatalogValidationError:
                 await _answer(
                     message,
-                    "Сервис поиска временно недоступен. Попробуйте ещё раз немного позже.",
+                    "Введите не менее 3 символов: название, код или артикул товара.",
                 )
-            return
+                return
+            except (
+                CatalogConfigurationError,
+                CatalogUnauthorizedError,
+                CatalogRateLimitError,
+                CatalogUnavailableError,
+                CatalogResponseError,
+                CatalogClientError,
+            ) as exc:
+                _record_b2b_fallback()
+                logger.warning(
+                    "B2B search fallback to local search_source=local_fallback "
+                    "query_length=%s error_type=%s",
+                    len(normalized_query),
+                    type(exc).__name__,
+                )
+                try:
+                    await _run_search_with_thinking(
+                        message,
+                        _send_local_search_results(
+                            message,
+                            query,
+                            search_source="local_fallback",
+                        ),
+                    )
+                    success = True
+                except Exception:
+                    logger.exception(
+                        "Local search fallback failed search_source=local_fallback "
+                        "query_length=%s",
+                        len(normalized_query),
+                    )
+                    await _answer(
+                        message,
+                        "Сервис поиска временно недоступен. Попробуйте ещё раз немного позже.",
+                    )
+                return
 
-    await _send_local_search_results(message, query, search_source="local")
+        await _run_search_with_thinking(
+            message,
+            _send_local_search_results(message, query, search_source="local"),
+        )
+        success = True
+    finally:
+        await _maybe_send_dealer_promo(message, user_id, success=success)
 
 
 async def _send_b2b_search_results(
@@ -436,14 +598,15 @@ async def _send_b2b_search_results(
         keyboard = None
         if response.catalog_search_url:
             keyboard = _url_button_keyboard(
-                "Открыть поиск в каталоге",
+                "Открыть каталог",
                 response.catalog_search_url,
             )
         await _answer(
             message,
             (
                 f"По запросу «{query}» ничего не найдено.\n\n"
-                "Проверьте код, артикул или попробуйте часть названия."
+                "Проверьте код, артикул или попробуйте часть названия.\n\n"
+                "🌐 Посмотреть полный каталог товаров"
             ),
             reply_markup=keyboard,
         )
@@ -451,14 +614,15 @@ async def _send_b2b_search_results(
 
     if response.exact_match:
         product = products[0]
+        # MAX/obabot strips HTML/Markdown links, so keep a stable URL-button CTA.
         keyboard = None
         if product.product_url:
-            keyboard = _url_button_keyboard("Открыть товар", product.product_url)
+            keyboard = _url_button_keyboard("Открыть карточку товара", product.product_url)
         await _answer(message, _format_exact_product_card(product), reply_markup=keyboard)
         return
 
     if len(products) == 1:
-        intro = f"Найдено товаров: 1."
+        intro = "Найдено товаров: 1."
     elif len(products) < 5:
         intro = (
             f"По запросу «{query}» найдено несколько товаров.\n"
@@ -474,7 +638,7 @@ async def _send_b2b_search_results(
     for index, product in enumerate(products, start=1):
         keyboard = None
         if product.product_url:
-            keyboard = _url_button_keyboard("Открыть товар", product.product_url)
+            keyboard = _url_button_keyboard("Открыть карточку товара", product.product_url)
         await _answer(
             message,
             _format_compact_product_card(index, product),
@@ -484,9 +648,9 @@ async def _send_b2b_search_results(
     if response.catalog_search_url:
         await _answer(
             message,
-            "Показать всё в каталоге",
+            "🌐 Посмотреть полный каталог товаров",
             reply_markup=_url_button_keyboard(
-                "Показать всё в каталоге",
+                "Открыть каталог",
                 response.catalog_search_url,
             ),
         )
