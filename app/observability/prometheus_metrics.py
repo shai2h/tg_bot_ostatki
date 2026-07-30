@@ -11,7 +11,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from prometheus_client import CONTENT_TYPE_LATEST, Gauge, generate_latest
+from prometheus_client import (
+    CONTENT_TYPE_LATEST,
+    Counter,
+    Gauge,
+    Histogram,
+    generate_latest,
+)
 from sqlalchemy import select
 
 from app.bot.health import bot_health
@@ -38,6 +44,24 @@ database_up = Gauge("database_up", "Database availability")
 one_c_last_successful_update_timestamp_seconds = Gauge(
     "one_c_last_successful_update_timestamp_seconds",
     "Unix timestamp of the last successfully processed 1C stock update",
+)
+
+b2b_catalog_search_requests_total = Counter(
+    "b2b_catalog_search_requests_total",
+    "Total B2B catalog search requests",
+)
+b2b_catalog_search_errors_total = Counter(
+    "b2b_catalog_search_errors_total",
+    "Total B2B catalog search errors",
+    ["error_type"],
+)
+b2b_catalog_search_duration_seconds = Histogram(
+    "b2b_catalog_search_duration_seconds",
+    "B2B catalog search latency in seconds",
+)
+b2b_catalog_search_fallback_total = Counter(
+    "b2b_catalog_search_fallback_total",
+    "Total fallbacks from B2B catalog search to local search",
 )
 
 

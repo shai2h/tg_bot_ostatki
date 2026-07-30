@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
+from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -21,7 +23,19 @@ from openpyxl.styles import PatternFill
 from sqlalchemy import select
 
 from app.bot.utils import format_stock_quantity
+from app.config import settings
 from app.db.database import async_session_maker
+from app.services.catalog_client import search_products as b2b_search_products
+from app.services.catalog_exceptions import (
+    CatalogClientError,
+    CatalogConfigurationError,
+    CatalogRateLimitError,
+    CatalogResponseError,
+    CatalogUnauthorizedError,
+    CatalogUnavailableError,
+    CatalogValidationError,
+)
+from app.services.catalog_models import CatalogProduct, CatalogSearchResponse
 from app.services.search import (
     find_products_by_text as find_products_by_query,
     fuzzy_find_products,
@@ -29,6 +43,8 @@ from app.services.search import (
     log_user_query,
 )
 from app.warehouse_stock.models import OstatkiMeta, WarehouseStocks
+
+logger = logging.getLogger(__name__)
 
 
 _HTML_TAG_RE = re.compile(r"</?(?:b|strong|i|em|u|s|code|pre|a)(?:\s+[^>]*)?>", re.IGNORECASE)
@@ -53,6 +69,109 @@ def _price_list_keyboard() -> InlineKeyboardMarkup:
             ]
         ]
     )
+
+
+def _url_button_keyboard(text: str, url: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=text, url=url)]]
+    )
+
+
+def _normalize_query(query: str) -> str:
+    return " ".join(query.strip().split())
+
+
+def _format_retail_price_line(product: CatalogProduct) -> str | None:
+    display = (product.retail_price_display or "").strip()
+    if display:
+        return f"Розничная цена: {display}"
+
+    if product.retail_price is None:
+        return None
+
+    try:
+        value = Decimal(product.retail_price)
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+    sign = "-" if value < 0 else ""
+    absolute = abs(value)
+    quantized = f"{absolute:.2f}"
+    integer_part, _, fraction = quantized.partition(".")
+    grouped = f"{int(integer_part):,}".replace(",", " ")
+    if fraction.rstrip("0"):
+        formatted = f"{grouped},{fraction.rstrip('0')}"
+    else:
+        formatted = grouped
+    return f"Розничная цена: {sign}{formatted} ₽"
+
+
+def _append_optional_field(lines: list[str], label: str, value: str | None) -> None:
+    if value is None:
+        return
+    text = str(value).strip()
+    if not text:
+        return
+    lines.append(f"{label}: {text}")
+
+
+def _format_exact_product_card(product: CatalogProduct) -> str:
+    lines = ["✅ Товар найден", "", product.title]
+    _append_optional_field(lines, "Код", product.code)
+    _append_optional_field(lines, "Артикул", product.article)
+    _append_optional_field(lines, "Бренд", product.brand)
+    _append_optional_field(lines, "Категория", product.category)
+    price_line = _format_retail_price_line(product)
+    if price_line:
+        lines.append(price_line)
+
+    lines.append("")
+    lines.append("Наличие:")
+    if product.warehouses:
+        for warehouse in product.warehouses:
+            label = (warehouse.label or "").strip()
+            name = (warehouse.name or "").strip()
+            if name and label:
+                lines.append(f"• {name} — {label}")
+            elif name:
+                lines.append(f"• {name}")
+            elif label:
+                lines.append(f"• {label}")
+    else:
+        label = (product.availability.label if product.availability else None) or ""
+        label = label.strip()
+        if label:
+            lines.append(f"• {label}")
+
+    return "\n".join(lines).strip()
+
+
+def _format_compact_product_card(index: int, product: CatalogProduct) -> str:
+    lines = [f"{index}. {product.title}", ""]
+    _append_optional_field(lines, "Код", product.code)
+    _append_optional_field(lines, "Артикул", product.article)
+    _append_optional_field(lines, "Бренд", product.brand)
+    _append_optional_field(lines, "Категория", product.category)
+    price_line = _format_retail_price_line(product)
+    if price_line:
+        lines.append(price_line)
+
+    availability_label = ""
+    if product.availability and product.availability.label:
+        availability_label = product.availability.label.strip()
+    if availability_label:
+        lines.append(f"Наличие: {availability_label}")
+
+    return "\n".join(lines).strip()
+
+
+def _record_b2b_fallback() -> None:
+    try:
+        from app.observability.prometheus_metrics import b2b_catalog_search_fallback_total
+
+        b2b_catalog_search_fallback_total.inc()
+    except Exception:  # pragma: no cover
+        logger.debug("B2B fallback metric skipped", exc_info=True)
 
 
 def _is_max_event(event: Message | CallbackQuery) -> bool:
@@ -257,10 +376,142 @@ def register_handlers(router) -> None:
 
 async def _send_search_results(message: Message, user_id: int, query: str) -> None:
     await log_user_query(user_id, query)
+    normalized_query = _normalize_query(query)
+
+    if settings.B2B_CATALOG_SEARCH_ENABLED:
+        try:
+            response = await b2b_search_products(normalized_query, limit=5)
+            await _send_b2b_search_results(message, normalized_query, response)
+            return
+        except CatalogValidationError:
+            await _answer(
+                message,
+                "Введите не менее 3 символов: название, код или артикул товара.",
+            )
+            return
+        except (
+            CatalogConfigurationError,
+            CatalogUnauthorizedError,
+            CatalogRateLimitError,
+            CatalogUnavailableError,
+            CatalogResponseError,
+            CatalogClientError,
+        ) as exc:
+            _record_b2b_fallback()
+            logger.warning(
+                "B2B search fallback to local search_source=local_fallback "
+                "query_length=%s error_type=%s",
+                len(normalized_query),
+                type(exc).__name__,
+            )
+            try:
+                await _send_local_search_results(
+                    message,
+                    query,
+                    search_source="local_fallback",
+                )
+            except Exception:
+                logger.exception(
+                    "Local search fallback failed search_source=local_fallback "
+                    "query_length=%s",
+                    len(normalized_query),
+                )
+                await _answer(
+                    message,
+                    "Сервис поиска временно недоступен. Попробуйте ещё раз немного позже.",
+                )
+            return
+
+    await _send_local_search_results(message, query, search_source="local")
+
+
+async def _send_b2b_search_results(
+    message: Message,
+    query: str,
+    response: CatalogSearchResponse,
+) -> None:
+    products = response.products[:5]
+
+    if not products:
+        keyboard = None
+        if response.catalog_search_url:
+            keyboard = _url_button_keyboard(
+                "Открыть поиск в каталоге",
+                response.catalog_search_url,
+            )
+        await _answer(
+            message,
+            (
+                f"По запросу «{query}» ничего не найдено.\n\n"
+                "Проверьте код, артикул или попробуйте часть названия."
+            ),
+            reply_markup=keyboard,
+        )
+        return
+
+    if response.exact_match:
+        product = products[0]
+        keyboard = None
+        if product.product_url:
+            keyboard = _url_button_keyboard("Открыть товар", product.product_url)
+        await _answer(message, _format_exact_product_card(product), reply_markup=keyboard)
+        return
+
+    if len(products) == 1:
+        intro = f"Найдено товаров: 1."
+    elif len(products) < 5:
+        intro = (
+            f"По запросу «{query}» найдено несколько товаров.\n"
+            f"Найдено товаров: {len(products)}."
+        )
+    else:
+        intro = (
+            f"По запросу «{query}» найдено несколько товаров.\n"
+            "Показываю первые 5."
+        )
+    await _answer(message, intro)
+
+    for index, product in enumerate(products, start=1):
+        keyboard = None
+        if product.product_url:
+            keyboard = _url_button_keyboard("Открыть товар", product.product_url)
+        await _answer(
+            message,
+            _format_compact_product_card(index, product),
+            reply_markup=keyboard,
+        )
+
+    if response.catalog_search_url:
+        await _answer(
+            message,
+            "Показать всё в каталоге",
+            reply_markup=_url_button_keyboard(
+                "Показать всё в каталоге",
+                response.catalog_search_url,
+            ),
+        )
+
+
+async def _send_local_search_results(
+    message: Message,
+    query: str,
+    *,
+    search_source: str,
+) -> None:
+    logger.info(
+        "Local catalog search started search_source=%s query_length=%s",
+        search_source,
+        len(query),
+    )
     items = await find_products_by_query(query)
 
     if items:
         latest_date = await _get_last_updated_label()
+        logger.info(
+            "Local catalog search ok search_source=%s result_count=%s",
+            search_source,
+            len(items),
+        )
 
         if len(items) > 20:
             file_name = f"Результаты_{query.replace(' ', '_')}.txt"
@@ -315,9 +566,19 @@ async def _send_search_results(message: Message, user_id: int, query: str) -> No
     filtered = [result for result in fuzzy_results if result["score"] > 70]
 
     if not filtered:
+        logger.info(
+            "Local catalog search empty search_source=%s query_length=%s",
+            search_source,
+            len(query),
+        )
         await _answer(message, "Товар не найден. Попробуйте уточнить запрос.")
         return
 
+    logger.info(
+        "Local catalog fuzzy ok search_source=%s result_count=%s",
+        search_source,
+        len(filtered[:5]),
+    )
     text = f"Товар <code>{query}</code> не найден, но найдены похожие позиции:\n\n"
     for result in filtered[:5]:
         score = int(result["score"])

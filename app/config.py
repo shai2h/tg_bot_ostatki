@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     METRICS_DB_CACHE_TTL_SECONDS: int = 30
 
+    B2B_CATALOG_API_BASE_URL: str = "https://rosholod.org"
+    MAX_BOT_INTERNAL_API_TOKEN: str | None = None
+    B2B_CATALOG_SEARCH_ENABLED: bool = False
+    B2B_CATALOG_API_TIMEOUT_SECONDS: float = 10.0
+
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",

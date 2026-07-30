@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from unittest.mock import patch
 
 import pytest
@@ -45,7 +46,8 @@ def reset_runtime() -> None:
 def test_register_health_middleware_on_router_with_observer_api(caplog: pytest.LogCaptureFixture) -> None:
     router = FakeRouter()
 
-    _register_health_middleware(dp=None, router=router)
+    with caplog.at_level(logging.INFO):
+        _register_health_middleware(dp=None, router=router)
 
     assert len(router.message.middleware_calls) == 1
     assert len(router.callback_query.middleware_calls) == 1
@@ -58,7 +60,8 @@ def test_register_health_middleware_skips_proxy_dispatcher_without_crash(
 ) -> None:
     dp = FakeProxyDispatcher()
 
-    _register_health_middleware(dp=dp, router=None)
+    with caplog.at_level(logging.WARNING):
+        _register_health_middleware(dp=dp, router=None)
 
     assert "Health middleware was not registered" in caplog.text
     assert "FakeProxyDispatcher" in caplog.text
@@ -82,11 +85,12 @@ async def test_get_bot_runtime_does_not_fail_when_dispatcher_has_no_middleware_a
     fake_dp = FakeProxyDispatcher()
     fake_router = FakeRouter()
 
-    with patch("app.bot.main.settings.MAX_TOKEN", "test-token"):
-        with patch("app.bot.main.settings.BOT_TOKEN", None):
-            with patch("app.bot.main.create_bot", return_value=(fake_bot, fake_dp, fake_router)):
-                with patch("app.bot.main.register_warehouse_handlers") as register_mock:
-                    runtime = await get_bot_runtime()
+    with caplog.at_level(logging.INFO):
+        with patch("app.bot.main.settings.MAX_TOKEN", "test-token"):
+            with patch("app.bot.main.settings.BOT_TOKEN", None):
+                with patch("app.bot.main.create_bot", return_value=(fake_bot, fake_dp, fake_router)):
+                    with patch("app.bot.main.register_warehouse_handlers") as register_mock:
+                        runtime = await get_bot_runtime()
 
     assert runtime.enabled is True
     assert runtime.router is fake_router
