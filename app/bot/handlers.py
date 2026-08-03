@@ -101,9 +101,14 @@ STATUS_EMOJI = {
     "many": "🟢",
     "available": "🟡",
     "few": "🟠",
-    "none": "🔴",
-    "unknown": "⚪",
 }
+STATUS_LABEL_FALLBACK = {
+    "many": "Много",
+    "available": "В наличии",
+    "few": "Немного",
+}
+POSITIVE_AVAILABILITY_STATUSES = set(STATUS_EMOJI)
+NO_STOCK_MESSAGE = "На складах пока нет доступного остатка."
 
 
 def _price_list_keyboard() -> InlineKeyboardMarkup:
@@ -150,20 +155,18 @@ def _format_product_availability_lines(product: CatalogProduct) -> list[str]:
     if product.warehouses:
         lines = ["Наличие:"]
         for warehouse in product.warehouses:
-            label = (warehouse.label or "").strip()
+            status = (warehouse.status or "").strip()
+            if status not in POSITIVE_AVAILABILITY_STATUSES:
+                continue
             display_city = ((warehouse.city or warehouse.name or "")).strip()
-            status_text = _format_availability_label(label or None, warehouse.status)
-            if display_city:
-                lines.append(f"• {display_city} — {status_text}")
-            else:
-                lines.append(f"• {status_text}")
-        return lines
+            if not display_city:
+                continue
+            label = (warehouse.label or "").strip() or STATUS_LABEL_FALLBACK[status]
+            lines.append(f"{STATUS_EMOJI[status]} {display_city} — {label}")
+        if len(lines) > 1:
+            return lines
 
-    label = product.availability.label if product.availability else None
-    status = product.availability.status if product.availability else None
-    if (label or "").strip():
-        return [f"{_availability_emoji(label, status)} Наличие: {label.strip()}"]
-    return ["⚪ Наличие: Наличие уточняется"]
+    return [f"⚪ {NO_STOCK_MESSAGE}"]
 
 
 def _format_retail_price_value(product: CatalogProduct) -> str | None:
@@ -613,7 +616,7 @@ async def _send_b2b_search_results(
         await _answer(
             message,
             (
-                f"По запросу «{query}» ничего не найдено.\n\n"
+                f"🤷 По запросу «{query}» ничего не найдено. \n\n"
                 "Проверьте код, артикул или попробуйте часть названия.\n\n"
                 "🌐 Посмотреть полный каталог товаров"
             ),
@@ -634,12 +637,12 @@ async def _send_b2b_search_results(
         intro = "Найдено товаров: 1."
     elif len(products) < 5:
         intro = (
-            f"По запросу «{query}» найдено несколько товаров.\n"
+            f"🕵️ По запросу «{query}» найдено несколько товаров.\n"
             f"Найдено товаров: {len(products)}."
         )
     else:
         intro = (
-            f"По запросу «{query}» найдено несколько товаров.\n"
+            f" 🕵️По запросу «{query}» найдено несколько товаров.\n"
             "Показываю первые 5."
         )
     await _answer(message, intro)
