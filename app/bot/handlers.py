@@ -204,7 +204,7 @@ def _append_optional_field(lines: list[str], label: str, value: str | None) -> N
 
 
 def _format_exact_product_card(product: CatalogProduct) -> str:
-    lines = [f"🧺 {product.title}", "", CARD_SEPARATOR, ""]
+    lines = [f"🔎 {product.title}", "", CARD_SEPARATOR, ""]
     _append_optional_field(lines, "Код", product.code)
     _append_optional_field(lines, "Артикул", product.article)
     _append_optional_field(lines, "Бренд", product.brand)
@@ -220,7 +220,7 @@ def _format_exact_product_card(product: CatalogProduct) -> str:
 
 
 def _format_compact_product_card(index: int, product: CatalogProduct) -> str:
-    lines = [f"🧺 {index}. {product.title}", "", CARD_SEPARATOR, ""]
+    lines = [f"🔎 {index}. {product.title}", "", CARD_SEPARATOR, ""]
     _append_optional_field(lines, "Код", product.code)
     _append_optional_field(lines, "Артикул", product.article)
     _append_optional_field(lines, "Бренд", product.brand)

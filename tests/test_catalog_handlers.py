@@ -122,7 +122,7 @@ async def test_feature_flag_true_calls_b2b_api() -> None:
 
     b2b_mock.assert_awaited_once_with("CM107", limit=5)
     local_mock.assert_not_awaited()
-    assert "🧺" in message.answers[0][0]
+    assert "🔎" in message.answers[0][0]
     assert "▶️ Цена: 107 258 ₽" in message.answers[0][0]
     assert "many" not in message.answers[0][0]
     markup = message.answers[0][1]["reply_markup"]
@@ -187,7 +187,7 @@ async def test_multiple_results_limited_to_five() -> None:
     product_answers = message.answers[1:6]
     assert len(product_answers) == 5
     for idx, (text, kwargs) in enumerate(product_answers, start=1):
-        assert text.startswith(f"🧺 {idx}. Товар {idx}")
+        assert text.startswith(f"🔎 {idx}. Товар {idx}")
         assert "▶️ Цена:" in text
         assert kwargs["reply_markup"].inline_keyboard[0][0].url.endswith(f"/{idx}")
     catalog_text, catalog_kwargs = message.answers[-1]
@@ -323,7 +323,7 @@ async def test_spam_guard_blocks_parallel_search() -> None:
 
 def test_exact_card_uses_labels_and_retail_price_only() -> None:
     text = _format_exact_product_card(_product())
-    assert text.startswith("🧺 Шкаф холодильный")
+    assert text.startswith("🔎 Шкаф холодильный")
     assert "▶️ Цена: 107 258 ₽" in text
     assert "🟢 Москва — Много" in text
     assert "🟠 Казань — Немного" in text
@@ -333,7 +333,7 @@ def test_exact_card_uses_labels_and_retail_price_only() -> None:
 
 def test_compact_card_uses_city_warehouses_before_availability_label() -> None:
     text = _format_compact_product_card(1, _product())
-    assert text.startswith("🧺 1. ")
+    assert text.startswith("🔎 1. ")
     assert "🟢 Москва — Много" in text
     assert "🟠 Казань — Немного" in text
     assert "•" not in text
@@ -452,7 +452,7 @@ async def test_bot_echo_does_not_start_search() -> None:
         _bot=bot,
         chat=SimpleNamespace(id=55),
         message_id="bot-card-1",
-        text="🧺 Товар",
+        text="🔎 Товар",
         platform="max",
     )
     assert _accept_inbound_message(message) is False
