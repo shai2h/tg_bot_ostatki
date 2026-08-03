@@ -41,8 +41,8 @@ def _product(**overrides) -> CatalogProduct:
         "retail_price_display": "107 258 ₽",
         "availability": CatalogAvailability(status="many", label="Много"),
         "warehouses": [
-            CatalogWarehouseAvailability(name="Москва", status="many", label="Много"),
-            CatalogWarehouseAvailability(name="Казань", status="few", label="Немного"),
+            CatalogWarehouseAvailability(city="Москва", status="many", label="Много"),
+            CatalogWarehouseAvailability(city="Казань", status="few", label="Немного"),
         ],
         "product_url": "https://rosholod.org/catalog/12345",
     }
@@ -330,11 +330,51 @@ def test_exact_card_uses_labels_and_retail_price_only() -> None:
     assert "many" not in text
 
 
-def test_compact_card_uses_availability_label() -> None:
+def test_compact_card_uses_city_warehouses_before_availability_label() -> None:
     text = _format_compact_product_card(1, _product())
     assert text.startswith("🧺 1. ")
+    assert "Москва — 🟢 Много" in text
+    assert "Казань — 🟠 Немного" in text
+    assert "🟢 Наличие: Много" not in text
+
+
+def test_compact_card_falls_back_to_availability_label_without_warehouses() -> None:
+    text = _format_compact_product_card(1, _product(warehouses=[]))
     assert "🟢 Наличие: Много" in text
-    assert "Москва" not in text
+
+
+def test_warehouse_name_is_temporary_fallback_without_city() -> None:
+    product = _product(
+        warehouses=[
+            CatalogWarehouseAvailability(name="Legacy city", status="available", label="В наличии")
+        ]
+    )
+    text = _format_exact_product_card(product)
+    assert "Legacy city — 🟡 В наличии" in text
+
+
+def test_status_emoji_mapping_for_all_warehouse_statuses() -> None:
+    product = _product(
+        warehouses=[
+            CatalogWarehouseAvailability(city="Many", status="many", label="Много"),
+            CatalogWarehouseAvailability(city="Available", status="available", label="В наличии"),
+            CatalogWarehouseAvailability(city="Few", status="few", label="Немного"),
+            CatalogWarehouseAvailability(city="None", status="none", label="Нет в наличии"),
+            CatalogWarehouseAvailability(city="Unknown", status="unknown", label="Наличие уточняется"),
+        ]
+    )
+
+    text = _format_exact_product_card(product)
+
+    assert "Many — 🟢 Много" in text
+    assert "Available — 🟡 В наличии" in text
+    assert "Few — 🟠 Немного" in text
+    assert "None — 🔴 Нет в наличии" in text
+    assert "Unknown — ⚪ Наличие уточняется" in text
+    assert "many" not in text
+    assert "available" not in text
+    assert "few" not in text
+    assert "none" not in text
 
 
 def test_price_fallback_without_display() -> None:

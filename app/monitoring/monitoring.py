@@ -105,14 +105,14 @@ class SystemMonitor:
             if time_diff > threshold:
                 # Проблема: нет запросов
                 if current_status['status'] != 'error':
-                    message = f"🔴 Проблема: запросы с 1С не приходят уже {int(time_diff.total_seconds()/60)} минут"
+                    message = f"Запросы от 1С не поступают уже {int(time_diff.total_seconds()/60)} минут."
                     await self._update_status('api_1c', 'error', message)
                     await self.notifier.send_alert(message)
                     await self._log_event('api_1c', 'status_change', message, 'error')
             else:
                 # Все хорошо
                 if current_status['status'] == 'error':
-                    message = "✅ ОК: Запросы с 1С вернулись к работе"
+                    message = "Обмен с 1С восстановлен. Запросы приходят."
                     await self._update_status('api_1c', 'ok', message)
                     await self.notifier.send_recovery(message)
                     await self._log_event('api_1c', 'recovery', message, 'info')
@@ -131,7 +131,7 @@ class SystemMonitor:
                         # API отвечает
                         current_status = await self._get_component_status('telegram_bot')
                         if current_status['status'] == 'error':
-                            message = "✅ ОК: Telegram бот вернулся к работе"
+                            message = "Telegram бот снова отвечает и работает штатно."
                             await self._update_status('telegram_bot', 'ok', message)
                             await self.notifier.send_recovery(message)
                             await self._log_event('telegram_bot', 'recovery', message, 'info')
@@ -151,7 +151,7 @@ class SystemMonitor:
                 
                 # Пытаемся перезапустить
                 restart_result = await self._restart_telegram_bot()
-                restart_message = f"Результат перезапуска: {restart_result}"
+                restart_message = restart_result
                 await self.notifier.send_alert(restart_message)
                 await self._log_event('telegram_bot', 'restart_attempt', restart_message, 'warning')
     
@@ -177,16 +177,16 @@ class SystemMonitor:
                 )
                 
                 if status_result.stdout.strip() == 'active':
-                    return "✅ Служба успешно перезапущена"
+                    return "Служба успешно перезапущена."
                 else:
-                    return f"⚠️ Служба перезапущена, но статус: {status_result.stdout.strip()}"
+                    return f"Служба перезапущена, текущий статус: {status_result.stdout.strip()}."
             else:
-                return f"❌ Ошибка перезапуска: {result.stderr}"
+                return f"Ошибка перезапуска службы: {result.stderr}"
                 
         except subprocess.TimeoutExpired:
-            return "⏰ Тайм-аут при перезапуске службы"
+            return "Тайм-аут ожидания при перезапуске службы."
         except Exception as e:
-            return f"❌ Критическая ошибка при перезапуске: {str(e)}"
+            return f"Критическая ошибка при перезапуске службы: {str(e)}"
     
     async def _get_component_status(self, component: str) -> Dict[str, Any]:
         """Получение текущего статуса компонента"""

@@ -31,8 +31,8 @@ SAMPLE_PRODUCT = {
     "retail_price_display": "107 258 ₽",
     "availability": {"status": "many", "label": "Много"},
     "warehouses": [
-        {"name": "Москва", "status": "many", "label": "Много"},
-        {"name": "Казань", "status": "few", "label": "Немного"},
+        {"city": "Москва", "status": "many", "label": "Много"},
+        {"city": "Казань", "status": "few", "label": "Немного"},
     ],
     "product_url": "https://rosholod.org/catalog/12345",
     "quantity": 42,
@@ -96,6 +96,7 @@ async def test_search_products_parses_success(catalog_settings) -> None:
     assert product.title.startswith("Шкаф")
     assert product.retail_price == Decimal("107258.00")
     assert product.retail_price_display == "107 258 ₽"
+    assert product.warehouses[0].city == "Москва"
     assert product.warehouses[0].label == "Много"
     assert not hasattr(product, "quantity") or "quantity" not in product.model_fields_set
 

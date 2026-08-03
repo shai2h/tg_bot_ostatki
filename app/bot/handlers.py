@@ -97,6 +97,13 @@ _AVAILABILITY_EMOJI = (
     ("много", "🟢"),
     ("нет", "🔴"),
 )
+STATUS_EMOJI = {
+    "many": "🟢",
+    "available": "🟡",
+    "few": "🟠",
+    "none": "🔴",
+    "unknown": "⚪",
+}
 
 
 def _price_list_keyboard() -> InlineKeyboardMarkup:
@@ -123,6 +130,10 @@ def _normalize_query(query: str) -> str:
 
 
 def _availability_emoji(label: str | None, status: str | None = None) -> str:
+    status_emoji = STATUS_EMOJI.get((status or "").strip())
+    if status_emoji:
+        return status_emoji
+
     needle = f"{label or ''} {status or ''}".casefold()
     for token, emoji in _AVAILABILITY_EMOJI:
         if token in needle:
@@ -133,6 +144,26 @@ def _availability_emoji(label: str | None, status: str | None = None) -> str:
 def _format_availability_label(label: str | None, status: str | None = None) -> str:
     text = (label or "").strip() or "Наличие уточняется"
     return f"{_availability_emoji(text, status)} {text}"
+
+
+def _format_product_availability_lines(product: CatalogProduct) -> list[str]:
+    if product.warehouses:
+        lines = ["Наличие:"]
+        for warehouse in product.warehouses:
+            label = (warehouse.label or "").strip()
+            display_city = ((warehouse.city or warehouse.name or "")).strip()
+            status_text = _format_availability_label(label or None, warehouse.status)
+            if display_city:
+                lines.append(f"• {display_city} — {status_text}")
+            else:
+                lines.append(f"• {status_text}")
+        return lines
+
+    label = product.availability.label if product.availability else None
+    status = product.availability.status if product.availability else None
+    if (label or "").strip():
+        return [f"{_availability_emoji(label, status)} Наличие: {label.strip()}"]
+    return ["⚪ Наличие: Наличие уточняется"]
 
 
 def _format_retail_price_value(product: CatalogProduct) -> str | None:
@@ -180,25 +211,7 @@ def _format_exact_product_card(product: CatalogProduct) -> str:
         lines.append(f"▶️ Цена: {price}")
 
     lines.append("")
-    if product.warehouses:
-        lines.append("Наличие:")
-        for warehouse in product.warehouses:
-            label = (warehouse.label or "").strip()
-            name = (warehouse.name or "").strip()
-            status_text = _format_availability_label(label or None, warehouse.status)
-            if name:
-                lines.append(f"• {name} — {status_text}")
-            else:
-                lines.append(f"• {status_text}")
-    else:
-        label = product.availability.label if product.availability else None
-        status = product.availability.status if product.availability else None
-        if (label or "").strip():
-            lines.append(
-                f"{_availability_emoji(label, status)} Наличие: {label.strip()}"
-            )
-        else:
-            lines.append("⚪ Наличие: Наличие уточняется")
+    lines.extend(_format_product_availability_lines(product))
 
     return "\n".join(lines).strip()
 
@@ -213,12 +226,8 @@ def _format_compact_product_card(index: int, product: CatalogProduct) -> str:
     if price:
         lines.append(f"▶️ Цена: {price}")
 
-    label = product.availability.label if product.availability else None
-    status = product.availability.status if product.availability else None
-    if (label or "").strip():
-        lines.append(f"{_availability_emoji(label, status)} Наличие: {label.strip()}")
-    else:
-        lines.append("⚪ Наличие: Наличие уточняется")
+    lines.append("")
+    lines.extend(_format_product_availability_lines(product))
 
     return "\n".join(lines).strip()
 

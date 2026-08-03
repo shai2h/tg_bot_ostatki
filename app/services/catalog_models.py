@@ -16,7 +16,8 @@ class CatalogAvailability(BaseModel):
 class CatalogWarehouseAvailability(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    name: str
+    city: str | None = None
+    name: str | None = None
     status: str | None = None
     label: str | None = None
 
